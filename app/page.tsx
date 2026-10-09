@@ -41,7 +41,11 @@ async function load(): Promise<Loaded> {
     const [alerts, status, misses] = await Promise.all([
       recentAlerts(30),
       readStatus(),
-      recentMisses(30).catch(() => [] as MissRow[]), // table appears once the updated monitor starts
+      recentMisses(30).catch((e) => {
+        // The table appears once the monitor has started; anything else is a real error worth seeing.
+        if (!/relation .* does not exist/.test(String(e))) console.error("missed moves query failed", e);
+        return [] as MissRow[];
+      }),
     ]);
     return { alerts, misses, status };
   } catch (e) {

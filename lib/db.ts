@@ -265,7 +265,7 @@ export async function upsertMiss(m: {
 export async function recentMisses(days = 30): Promise<MissRow[]> {
   return rowsOut<MissRow>(await db()`SELECT id, to_char(day, 'YYYY-MM-DD') AS day, symbol, detected_at, day_change_pct, price, prev_close,
       day_volume, reason_code, reason_text, headline, url, news_at, origin
-    FROM misses WHERE day > (now() AT TIME ZONE 'America/New_York')::date - ${days}
+    FROM misses WHERE day > (now() AT TIME ZONE 'America/New_York')::date - ${days}::int
     ORDER BY day DESC, abs(day_change_pct) DESC LIMIT 1000`);
 }
 
