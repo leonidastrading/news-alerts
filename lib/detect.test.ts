@@ -11,7 +11,10 @@ import {
   preOpenNews,
   rejectReason,
   rideReturn,
-  shouldExit,
+  exitPlan,
+  tradeBlock,
+  entryLimit,
+  confirmChecks,
   symbolsToWatch,
   type GapWatch,
   type NewsItem,
@@ -127,6 +130,7 @@ test("email subjects", () => {
     volumeSince: null,
     dayVolume: null,
     prevDayVolume: null,
+    sp500: null,
     minutesAfterNews: 6.2,
     trade: "",
   };
@@ -140,12 +144,13 @@ test("email subjects", () => {
 test("paper trades are held to the close by default", () => {
   const opened = Date.parse("2026-10-08T14:00:00Z"); // 10:00 ET
   const close = Date.parse("2026-10-08T20:00:00Z"); // 4:00 PM ET
-  assert.equal(shouldExit(opened, Date.parse("2026-10-08T19:30:00Z"), close, 0), false, "3:30 PM: still holding");
-  assert.equal(shouldExit(opened, Date.parse("2026-10-08T19:56:00Z"), close, 0), true, "3:56 PM: close it");
-  assert.equal(shouldExit(opened, Date.parse("2026-10-08T14:31:00Z"), close, 30), true, "fixed 30-minute hold");
+  const plan = (iso: string, closeAt = close, hold = 0) => exitPlan(opened, Date.parse(iso), closeAt, hold, 12);
+  assert.equal(plan("2026-10-08T19:30:00Z"), "wait", "3:30 PM: still holding");
+  assert.equal(plan("2026-10-08T19:48:00Z"), "moc", "3:48 PM: market-on-close order");
+  assert.equal(plan("2026-10-08T19:58:30Z"), "now", "3:58:30 PM: too late for market-on-close");
+  assert.equal(plan("2026-10-08T14:31:00Z", close, 30), "now", "fixed 30-minute hold");
   // Missed the close (monitor was down): close at the next open.
-  const nextClose = Date.parse("2026-10-09T20:00:00Z");
-  assert.equal(shouldExit(opened, Date.parse("2026-10-09T13:31:00Z"), nextClose, 0), true);
+  assert.equal(plan("2026-10-09T13:31:00Z", Date.parse("2026-10-09T20:00:00Z")), "now");
 });
 
 test("news from while the market was closed, grouped by ticker", () => {
@@ -264,4 +269,39 @@ test("a move without a burst of volume is not an alert (PURR)", () => {
   at2(11.16, 0, 66_800);
   assert.equal(at2(11.34, 5, 120_000), "wait");
   assert.equal(at2(11.36, 5.1, 121_000), "alert");
+});
+
+test("a few hundred shares can't trigger an alert (CABO)", () => {
+  // CABO: 921 IEX shares (~$10K) in the 3.5 minutes after the headline, on a stock that trades ~41K a day.
+  const c = { ...cfg, rangeFraction: 0.25, minVolumeRatio: 2, minDollarsSinceNews: 50_000 };
+  const base = { prevVolume: 41_500, prevRange: 0.05, prevDollarVolume: 637_000 };
+  const w: Watch = { symbol: "CABO", news: news(["CABO"]), seenAt: now, hits: 0, direction: 0 };
+  const at = (price: number, min: number, dayVolume: number) =>
+    evaluate(w, snap(price, now + min * 60_000, { ...base, dayVolume }), now + min * 60_000, c);
+  at(11.51, 0, 38_500);
+  assert.equal(at(10.6, 3.4, 39_300), "wait");
+  assert.equal(at(10.53, 3.5, 39_421), "wait");
+  assert.equal(w.hits, 0);
+});
+
+test("thin stocks need the move to hold for 30 seconds", () => {
+  const c = { confirmTicks: 2, thinDollarVolume: 5e6, thinConfirmSeconds: 30, pollSeconds: 5 };
+  assert.equal(confirmChecks({ prevDollarVolume: 637_000 }, c), 6);
+  assert.equal(confirmChecks({ prevDollarVolume: 8e6 }, c), 2);
+  assert.equal(confirmChecks({ prevDollarVolume: 637_000 }, { confirmTicks: 2 }), 2);
+});
+
+test("when an alert isn't traded", () => {
+  const close = Date.parse("2026-10-09T20:00:00Z");
+  const c = { tradeCutoffMinutes: 15, maxDayMoveToTrade: 0.15 };
+  const ok = { kind: "intraday", baseline: 37.91, prevClose: 34.17 };
+  assert.equal(tradeBlock(ok, Date.parse("2026-10-09T19:34:00Z"), close, c), null, "3:34 PM, +11% on the day");
+  assert.match(tradeBlock(ok, Date.parse("2026-10-09T19:46:00Z"), close, c)!, /cutoff/);
+  assert.equal(tradeBlock({ kind: "intraday", baseline: 11.51, prevClose: 15.36 }, Date.parse("2026-10-09T17:44:00Z"), close, c), "already −25% on the day");
+  assert.equal(tradeBlock({ kind: "preopen", baseline: 11.51, prevClose: 15.36 }, Date.parse("2026-10-09T14:00:00Z"), close, c), null, "gaps are what opening-range breaks trade");
+});
+
+test("entry limit prices", () => {
+  assert.equal(entryLimit(10.53, -1, 0.005), 10.48, "short: no lower than 0.5% under the alert price");
+  assert.equal(entryLimit(77.17, 1, 0.005), 77.55, "long: no higher than 0.5% over");
 });

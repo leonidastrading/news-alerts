@@ -125,7 +125,13 @@ export async function snapshots(symbols: string[]): Promise<Record<string, Snaps
 export type Bar = { t: number; o: number; h: number; l: number; c: number; v: number };
 
 /** 1-minute or daily bars for several symbols, oldest first. */
-export async function barsMulti(symbols: string[], timeframe: "1Min" | "1Day", start: Date, end: Date): Promise<Record<string, Bar[]>> {
+export async function barsMulti(
+  symbols: string[],
+  timeframe: "1Min" | "1Day",
+  start: Date,
+  end: Date,
+  adjustment: "raw" | "split" = "raw",
+): Promise<Record<string, Bar[]>> {
   const out: Record<string, Bar[]> = {};
   for (let i = 0; i < symbols.length; i += 200) {
     let token: string | undefined;
@@ -137,7 +143,7 @@ export async function barsMulti(symbols: string[], timeframe: "1Min" | "1Day", s
         end: end.toISOString(),
         feed: "iex",
         limit: "10000",
-        adjustment: "raw",
+        adjustment,
       });
       if (token) q.set("page_token", token);
       const r = await call<{ bars: Record<string, RawBar[]>; next_page_token?: string | null }>(DATA, `/v2/stocks/bars?${q}`);
@@ -150,8 +156,8 @@ export async function barsMulti(symbols: string[], timeframe: "1Min" | "1Day", s
   return out;
 }
 
-export async function bars(symbol: string, timeframe: "1Min" | "1Day", start: Date, end: Date): Promise<Bar[]> {
-  return (await barsMulti([symbol], timeframe, start, end))[symbol] ?? [];
+export async function bars(symbol: string, timeframe: "1Min" | "1Day", start: Date, end: Date, adjustment: "raw" | "split" = "raw"): Promise<Bar[]> {
+  return (await barsMulti([symbol], timeframe, start, end, adjustment))[symbol] ?? [];
 }
 
 /** The day's biggest gainers and losers (percent_change is in percent). */
@@ -176,7 +182,7 @@ export const clock = () => call<Clock>(PAPER, "/v2/clock");
 export type CalendarDay = { date: string; open: string; close: string };
 export const calendar = (start: string, end: string) => call<CalendarDay[]>(PAPER, `/v2/calendar?start=${start}&end=${end}`);
 
-export type Asset = { tradable: boolean; shortable: boolean; easy_to_borrow: boolean };
+export type Asset = { name: string; tradable: boolean; shortable: boolean; easy_to_borrow: boolean };
 export const asset = (symbol: string) => call<Asset>(PAPER, `/v2/assets/${encodeURIComponent(symbol)}`);
 
 export type Order = {
@@ -188,10 +194,21 @@ export type Order = {
   filled_at: string | null;
 };
 
-export const placeMarketOrder = (symbol: string, qty: number, side: "buy" | "sell") =>
+/**
+ * Entry order: a limit order that fills what it can at once at `limit` or better and cancels the rest
+ * (immediate-or-cancel), so a thin book can't fill it far from the alert price.
+ */
+export const placeEntryOrder = (symbol: string, qty: number, side: "buy" | "sell", limit: number) =>
   call<Order>(PAPER, "/v2/orders", {
     method: "POST",
-    body: JSON.stringify({ symbol, qty: String(qty), side, type: "market", time_in_force: "day" }),
+    body: JSON.stringify({ symbol, qty: String(qty), side, type: "limit", limit_price: String(limit), time_in_force: "ioc" }),
+  });
+
+/** Exit at the official closing price (market-on-close). Alpaca takes these until about 3:50 PM. */
+export const placeCloseOrder = (symbol: string, qty: number, side: "buy" | "sell") =>
+  call<Order>(PAPER, "/v2/orders", {
+    method: "POST",
+    body: JSON.stringify({ symbol, qty: String(qty), side, type: "market", time_in_force: "cls" }),
   });
 
 export const getOrder = (id: string) => call<Order>(PAPER, `/v2/orders/${id}`);
@@ -212,16 +229,35 @@ export type Position = {
 };
 export const positions = () => call<Position[]>(PAPER, "/v2/positions");
 
+/** The open position in a symbol, or null if there isn't one. */
+export async function position(symbol: string): Promise<Position | null> {
+  try {
+    return await call<Position>(PAPER, `/v2/positions/${encodeURIComponent(symbol)}`);
+  } catch (e) {
+    if (String(e).includes("HTTP 404")) return null;
+    throw e;
+  }
+}
+
 /** Close the whole position in a symbol; returns the closing order. */
 export const closePosition = (symbol: string) =>
   call<Order>(PAPER, `/v2/positions/${encodeURIComponent(symbol)}`, { method: "DELETE" });
 
-export async function hasPosition(symbol: string): Promise<boolean> {
-  try {
-    await call(PAPER, `/v2/positions/${encodeURIComponent(symbol)}`);
-    return true;
-  } catch (e) {
-    if (String(e).includes("HTTP 404")) return false;
-    throw e;
-  }
+export const hasPosition = async (symbol: string) => (await position(symbol)) != null;
+
+// ---------- S&P 500 membership ----------
+
+const SP500_CSV = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv";
+
+/** Current S&P 500 tickers (a public dataset kept in sync with the index), for tagging alerts and misses. */
+export async function sp500(): Promise<Set<string>> {
+  const res = await fetch(SP500_CSV);
+  if (!res.ok) throw new Error(`S&P 500 list: HTTP ${res.status}`);
+  const syms = (await res.text())
+    .split("\n")
+    .slice(1)
+    .map((line) => line.split(",")[0].trim().toUpperCase())
+    .filter(Boolean);
+  if (syms.length < 400) throw new Error(`S&P 500 list: only ${syms.length} rows`);
+  return new Set(syms);
 }

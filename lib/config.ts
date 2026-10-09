@@ -45,6 +45,19 @@ export type Config = {
   missMovePct: number;
   /** Close each paper trade after this many minutes; 0 holds it to the end of the day. Always closed before the close. */
   holdMinutes: number;
+  /** Dollars traded on IEX since the headline (at the alert price) an intraday alert needs, so a few hundred shares can't trigger one. */
+  minDollarsSinceNews: number;
+  /** Stocks with less than this previous-day IEX dollar volume count as thin and need the move to hold for `thinConfirmSeconds`. */
+  thinDollarVolume: number;
+  thinConfirmSeconds: number;
+  /** Entry orders are limit orders this far past the alert price (fraction); whatever doesn't fill at once is cancelled. */
+  limitSlippage: number;
+  /** Don't trade intraday news on a stock already this far from the previous close when the headline arrived (fraction). */
+  maxDayMoveToTrade: number;
+  /** No new trades in the last this-many minutes of the session (15 = 3:45 PM); alerts after that are logged only. */
+  tradeCutoffMinutes: number;
+  /** Minutes before the close to send market-on-close exit orders (Alpaca takes them until about 3:50 PM). */
+  mocLeadMinutes: number;
 };
 
 export function loadConfig(): Config {
@@ -57,7 +70,7 @@ export function loadConfig(): Config {
     pollSeconds: num("POLL_SECONDS", 5),
     maxSymbolsPerHeadline: num("MAX_SYMBOLS_PER_HEADLINE", 4),
     minPrice: num("MIN_PRICE", 3),
-    minIexDollarVolume: num("MIN_IEX_DOLLAR_VOLUME", 500_000),
+    minIexDollarVolume: num("MIN_IEX_DOLLAR_VOLUME", 2_000_000),
     cooldownMinutes: num("COOLDOWN_MINUTES", 120),
     paperTrading: (process.env.PAPER_TRADING ?? "on").toLowerCase() !== "off",
     tradeNotional: num("TRADE_NOTIONAL", 2000),
@@ -69,5 +82,12 @@ export function loadConfig(): Config {
     maxAlertsPerDay: num("MAX_ALERTS_PER_DAY", 20),
     missMovePct: num("MISS_MOVE_PCT", 5) / 100,
     holdMinutes: num("HOLD_MINUTES", 0),
+    minDollarsSinceNews: num("MIN_DOLLARS_SINCE_NEWS", 50_000),
+    thinDollarVolume: num("THIN_DOLLAR_VOLUME", 5_000_000),
+    thinConfirmSeconds: num("THIN_CONFIRM_SECONDS", 30),
+    limitSlippage: num("LIMIT_SLIPPAGE_PCT", 0.5) / 100,
+    maxDayMoveToTrade: num("MAX_DAY_MOVE_TO_TRADE_PCT", 15) / 100,
+    tradeCutoffMinutes: num("TRADE_CUTOFF_MINUTES", 15),
+    mocLeadMinutes: num("MOC_LEAD_MINUTES", 12),
   };
 }

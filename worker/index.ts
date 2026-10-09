@@ -12,14 +12,16 @@ import {
   closePosition,
   credentials,
   getOrder,
-  hasPosition,
   mostActives,
   movers,
   newsBetween,
   newsSince,
   NEWS_STREAM,
-  placeMarketOrder,
+  placeCloseOrder,
+  placeEntryOrder,
+  position,
   snapshots,
+  sp500,
   toNewsItem,
   type Clock,
 } from "../lib/alpaca.ts";
@@ -29,7 +31,9 @@ import {
   openingRange,
   preOpenNews,
   rejectReason,
-  shouldExit,
+  entryLimit,
+  exitPlan,
+  tradeBlock,
   symbolsToWatch,
   usTickers,
   isNotNews,
@@ -56,6 +60,7 @@ import {
   setTradeStatus,
   upsertMiss,
   alertedOn,
+  deleteMiss,
   writeStatus,
   type AlertRow,
   type NewAlert,
@@ -99,6 +104,17 @@ let lastAlertAt: Record<string, number> = {};
 let market: Clock | null = null;
 let lastNewsAt = new Date();
 let pendingCount = 0;
+
+// S&P 500 members, refreshed at each open; tagged on alerts and misses to compare later.
+let sp500Set: Set<string> | null = null;
+async function loadSp500() {
+  try {
+    sp500Set = await sp500();
+  } catch (e) {
+    noteError("S&P 500 list", e);
+  }
+}
+const inSp500 = (symbol: string) => (sp500Set ? sp500Set.has(symbol) : null);
 
 const stats = {
   startedAt: new Date().toISOString(),
@@ -216,6 +232,7 @@ function endGapWatch(g: TrackedGap, outcome: string) {
 async function setUpOpen(today: string, now: number) {
   dayLog = new Map();
   missRecorded.clear();
+  await loadSp500();
   const days = await calendar(nyDate(now - 10 * 86_400_000), today);
   const todayCal = days.find((d) => d.date === today);
   const prev = days.filter((d) => d.date < today).at(-1);
@@ -361,6 +378,7 @@ async function fireIntraday(w: Watch, s: Snapshot, now: number) {
     volumeSince: since.length ? since.reduce((t, b) => t + b.v, 0) : null,
     dayVolume: s.dayVolume,
     prevDayVolume: s.prevVolume,
+    sp500: inSp500(w.symbol),
   });
 }
 
@@ -393,6 +411,7 @@ async function fireBreakout(g: GapWatch, s: Snapshot, now: number) {
     volumeSince: s.dayVolume,
     dayVolume: s.dayVolume,
     prevDayVolume: s.prevVolume,
+    sp500: inSp500(g.symbol),
   });
 }
 
@@ -405,6 +424,7 @@ async function fire(a: NewAlert) {
   stats.alerts++;
   pendingCount++;
   const now = a.alertedAt.getTime();
+  await deleteMiss(nyDate(now), a.symbol).catch((e) => noteError(`miss cleanup ${a.symbol}`, e));
   if (sentDay !== nyDate(now)) {
     sentDay = nyDate(now);
     sentToday = [];
@@ -416,9 +436,23 @@ async function fire(a: NewAlert) {
     await setTradeOpened(id, `skipped: ${capped}`, null, null);
     return;
   }
+  const closeAt = market ? Date.parse(market.next_close) : now;
+  const blocked = tradeBlock(a, now, closeAt, cfg);
+  // After the cutoff the alert is only logged: there's nothing to act on before the close.
+  if (blocked && closeAt - now < cfg.tradeCutoffMinutes * 60_000) {
+    log(`ALERT (logged only: ${blocked}) ${a.kind} ${a.symbol} after "${a.headline}"`);
+    await setTradeOpened(id, `skipped: ${blocked}`, null, null);
+    return;
+  }
   sentToday.push(now);
   log(`ALERT ${a.kind} ${a.symbol} ${a.direction > 0 ? "up" : "down"} after "${a.headline}"`);
-  const trade = cfg.paperTrading ? await openTrade(id, a.symbol, a.direction, a.price) : "off";
+  let trade = "off";
+  if (blocked) {
+    await setTradeOpened(id, `skipped: ${blocked}`, null, null);
+    trade = `not traded (${blocked})`;
+  } else if (cfg.paperTrading) {
+    trade = await openTrade(id, a.symbol, a.direction, a.price);
+  }
   await sendAlertEmail({ ...a, minutesAfterNews: (a.alertedAt.getTime() - Date.parse(a.newsAt)) / 60_000, trade }).catch((e) =>
     noteError(`email ${a.symbol}`, e),
   );
@@ -452,6 +486,29 @@ async function missUniverse(): Promise<string[]> {
 }
 const screenerWarned = new Set<string>();
 
+// Funds, ETFs and leveraged/inverse products move with what they hold, not on their own news.
+const FUND_NAME = /\b(ETF|ETN|ETP|Fund|Index Fund|Daily|Inverse|Leveraged|UltraPro|UltraShort|ProShares|Direxion|\d+(\.\d+)?X)\b/i;
+const assetNames = new Map<string, string>();
+async function isFund(symbol: string): Promise<boolean> {
+  let name = assetNames.get(symbol);
+  if (name === undefined) {
+    name = await asset(symbol).then((a) => a.name ?? "", () => "");
+    assetNames.set(symbol, name);
+  }
+  return FUND_NAME.test(name);
+}
+
+/**
+ * The day's change against a split-adjusted previous close, for moves too big to take on trust: the
+ * snapshot's previous close isn't adjusted, so a split shows up as a crash (DXJ "−66.5%").
+ */
+async function checkedChange(symbol: string, snap: Snapshot, change: number, now: number): Promise<number | null> {
+  if (Math.abs(change) < 0.3) return change;
+  const daily = await bars(symbol, "1Day", new Date(now - 10 * 86_400_000), new Date(now), "split").catch(() => []);
+  const prev = daily.filter((b) => nyDate(b.t) < nyDate(now)).at(-1);
+  return prev?.c ? snap.price / prev.c - 1 : null;
+}
+
 async function scanMisses() {
   if (!market?.is_open) return;
   const now = Date.now();
@@ -466,6 +523,12 @@ async function scanMisses() {
     if (now - snap.tradeAt > 15 * 60_000) continue; // no recent trade: price not current
     const change = snap.price / snap.prevClose - 1;
     if (Math.abs(change) >= cfg.missMovePct) big.push({ symbol, change, snap });
+  }
+  for (let i = big.length - 1; i >= 0; i--) {
+    const b = big[i];
+    const checked = await checkedChange(b.symbol, b.snap, b.change, now);
+    if (checked == null || Math.abs(checked) < cfg.missMovePct || (await isFund(b.symbol))) big.splice(i, 1);
+    else b.change = checked;
   }
   stats.missScans++;
   lastMissScan = { at: new Date(now).toISOString(), checked: universe.length, bigMovers: big.length, recorded: 0 };
@@ -489,7 +552,7 @@ async function scanMisses() {
       symbol,
       dayChangePct: change,
       price: snap.price,
-      prevClose: snap.prevClose,
+      prevClose: snap.price / (1 + change),
       dayVolume: snap.dayVolume,
       reasonCode: reason.code,
       reasonText: reason.text,
@@ -497,6 +560,7 @@ async function scanMisses() {
       url: h?.url ?? null,
       newsAt: h ? new Date(h.at).toISOString() : null,
       origin: h?.origin ?? null,
+      sp500: inSp500(symbol),
     });
     missRecorded.set(symbol, Math.abs(change));
     lastMissScan.recorded++;
@@ -507,7 +571,9 @@ let lastMissScan = { at: "", checked: 0, bigMovers: 0, recorded: 0 };
 
 // ---------- Paper trades ----------
 
-const openTrades = new Map<number, { symbol: string; openedAt: number }>();
+const openTrades = new Map<number, { symbol: string; openedAt: number; mocOrderId?: string }>();
+const DEAD = new Set(["canceled", "rejected", "expired"]);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function openTrade(id: number, symbol: string, direction: number, price: number): Promise<string> {
   const skip = async (reason: string) => {
@@ -516,20 +582,29 @@ async function openTrade(id: number, symbol: string, direction: number, price: n
   };
   try {
     if (!market?.is_open) return await skip("market closed");
-    if (Date.parse(market.next_close) - Date.now() < 15 * 60_000) return await skip("too close to the close");
     const qty = Math.floor(cfg.tradeNotional / price);
     if (qty < 1) return await skip("price above trade size");
-    if (await hasPosition(symbol)) return await skip("already holding");
+    if (await position(symbol)) return await skip("already holding");
     if (direction < 0) {
       const a = await asset(symbol);
       if (!a.shortable || !a.easy_to_borrow) return await skip("not shortable");
     }
     const side = direction > 0 ? "buy" : "sell";
-    const order = await placeMarketOrder(symbol, qty, side);
+    const limit = entryLimit(price, direction, cfg.limitSlippage);
+    let order = await placeEntryOrder(symbol, qty, side, limit);
+    // Immediate-or-cancel settles within a moment; wait for it so an unfilled order is reported as such.
+    for (let i = 0; i < 5 && order.status !== "filled" && !DEAD.has(order.status); i++) {
+      await sleep(1000);
+      order = await getOrder(order.id);
+    }
+    const filled = Number(order.filled_qty || 0);
+    if (DEAD.has(order.status) && filled === 0) return await skip(`no fill at $${limit} or better`);
     await setTradeOpened(id, "open", qty, order.id, order.submitted_at ?? new Date().toISOString());
+    if (order.filled_avg_price) await setEntryFill(id, Number(order.filled_avg_price), order.filled_at, filled);
     openTrades.set(id, { symbol, openedAt: Date.now() });
-    const exit = cfg.holdMinutes > 0 ? `after ${cfg.holdMinutes} min` : "just before the close";
-    return `${direction > 0 ? "bought" : "shorted"} ${qty} shares at market, closing ${exit}`;
+    const exit = cfg.holdMinutes > 0 ? `after ${cfg.holdMinutes} min` : "at the closing price";
+    const shares = filled && filled < qty ? `${filled} of ${qty}` : `${qty}`;
+    return `${direction > 0 ? "bought" : "shorted"} ${shares} shares, limit $${limit}, closing ${exit}`;
   } catch (e) {
     noteError(`trade ${symbol}`, e);
     await setTradeOpened(id, "error", null, null).catch(() => {});
@@ -537,31 +612,62 @@ async function openTrade(id: number, symbol: string, direction: number, price: n
   }
 }
 
+async function closeNow(id: number, symbol: string) {
+  try {
+    const order = await closePosition(symbol);
+    await setTradeClosed(id, order.id, new Date());
+  } catch (e) {
+    // No position: the entry never filled or was already closed by hand.
+    if (!String(e).includes("HTTP 404")) throw e;
+    await setTradeClosed(id, null, new Date());
+  }
+}
+
+// End of day: a market-on-close order 12 minutes before the close, so trades exit at the official
+// closing price; if Alpaca rejects it, or it's too late for one, a market order instead.
 async function manageTrades() {
   if (openTrades.size === 0) return;
   if (!market?.is_open) return;
   const now = Date.now();
   const closeAt = Date.parse(market.next_close);
   for (const [id, t] of openTrades) {
-    if (!shouldExit(t.openedAt, now, closeAt, cfg.holdMinutes)) continue;
+    const plan = exitPlan(t.openedAt, now, closeAt, cfg.holdMinutes, cfg.mocLeadMinutes);
+    if (plan === "wait" || (plan === "moc" && t.mocOrderId)) continue;
     try {
-      const order = await closePosition(t.symbol);
-      await setTradeClosed(id, order.id, new Date());
-    } catch (e) {
-      // No position: the entry never filled or was already closed by hand.
-      if (!String(e).includes("HTTP 404")) {
-        noteError(`close ${t.symbol}`, e);
-        continue;
+      if (plan === "moc") {
+        const pos = await position(t.symbol);
+        if (!pos) {
+          await setTradeClosed(id, null, new Date());
+          openTrades.delete(id);
+          continue;
+        }
+        let order = await placeCloseOrder(t.symbol, Math.abs(Number(pos.qty)), pos.side === "long" ? "sell" : "buy");
+        await sleep(2000);
+        order = await getOrder(order.id);
+        if (!DEAD.has(order.status)) {
+          t.mocOrderId = order.id;
+          await setTradeClosed(id, order.id, new Date());
+          continue;
+        }
+        log(`market-on-close order for ${t.symbol} ${order.status}; closing at market`);
+      } else if (t.mocOrderId) {
+        // Last minutes: the market-on-close order stands unless Alpaca dropped it.
+        const o = await getOrder(t.mocOrderId);
+        if (!DEAD.has(o.status)) {
+          openTrades.delete(id);
+          continue;
+        }
+        log(`market-on-close order for ${t.symbol} ${o.status}; closing at market`);
       }
-      await setTradeClosed(id, null, new Date());
+      await closeNow(id, t.symbol);
+      openTrades.delete(id);
+    } catch (e) {
+      noteError(`close ${t.symbol}`, e);
     }
-    openTrades.delete(id);
   }
 }
 
 // ---------- Follow-up: fills and results ----------
-
-const DEAD = new Set(["canceled", "rejected", "expired"]);
 
 async function followUp() {
   if (pendingCount === 0 && openTrades.size === 0) return;
@@ -572,11 +678,11 @@ async function followUp() {
     try {
       if (a.entry_order_id && a.entry_price == null && !a.trade_status?.startsWith("error")) {
         const o = await getOrder(a.entry_order_id);
-        if (o.filled_avg_price) {
+        if (o.filled_avg_price && (o.status === "filled" || DEAD.has(o.status))) {
           a.entry_price = Number(o.filled_avg_price);
-          await setEntryFill(a.id, a.entry_price, o.filled_at);
+          await setEntryFill(a.id, a.entry_price, o.filled_at, Number(o.filled_qty));
         } else if (DEAD.has(o.status)) {
-          await setTradeStatus(a.id, `error: entry order ${o.status}`);
+          await setTradeStatus(a.id, `skipped: entry order ${o.status} unfilled`);
           openTrades.delete(a.id);
         }
       }
@@ -645,6 +751,7 @@ async function main() {
   await migrate();
   market = await clock();
   lastAlertAt = await lastAlertTimes();
+  await loadSp500();
   for (const a of await pendingAlerts()) {
     pendingCount++;
     if (a.trade_status === "open") openTrades.set(a.id, { symbol: a.symbol, openedAt: Date.parse(a.alerted_at) });

@@ -80,8 +80,8 @@ export default async function Page() {
         <p className="lede">
           <strong>Intraday news:</strong> when a stock moves {process.env.MOVE_PCT ?? "1.5"}% from where it was when the headline arrived.{" "}
           <strong>News from while the market was closed:</strong> when a stock breaks out of its first {process.env.OPEN_RANGE_MINUTES ?? "5"}{" "}
-          minutes&rsquo; range after the open. Each alert is emailed and paper-traded in the direction of the move, held to the end of the
-          day.
+          minutes&rsquo; range after the open. Each alert is emailed and paper-traded in the direction of the move with a limit order, held to the end of the
+          day and closed at the closing price. No new trades after 3:45 PM; later alerts are only logged.
         </p>
       </header>
       {"error" in data ? <div className="notice">{data.error}</div> : <Dashboard alerts={data.alerts} misses={data.misses} status={data.status} positions={positions} />}
@@ -109,8 +109,29 @@ function summarize(alerts: AlertRow[]) {
   };
 }
 
-function Dashboard({ alerts, misses, status, positions }: { alerts: AlertRow[]; misses: MissRow[]; status: Status; positions: Positions }) {
+const nyMinutes = (iso: string) => {
+  const [h, m] = new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: ET }).split(":").map(Number);
+  return h * 60 + m;
+};
+const nyDay = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: ET });
+
+function Dashboard({ alerts, misses: allMisses, status, positions }: { alerts: AlertRow[]; misses: MissRow[]; status: Status; positions: Positions }) {
   const all = summarize(alerts);
+  // A stock that alerted later the same day isn't a miss.
+  const alertedDays = new Set(alerts.map((a) => `${nyDay(a.alerted_at)} ${a.symbol}`));
+  const misses = allMisses.filter((m) => !alertedDays.has(`${m.day} ${m.symbol}`));
+  const timeGroups: [string, AlertRow[]][] = [
+    ["Open – 10:30 AM", alerts.filter((a) => nyMinutes(a.alerted_at) < 630)],
+    ["10:30 AM – 3:00 PM", alerts.filter((a) => nyMinutes(a.alerted_at) >= 630 && nyMinutes(a.alerted_at) < 900)],
+    ["Late session · 3:00 PM – close", alerts.filter((a) => nyMinutes(a.alerted_at) >= 900)],
+  ];
+  const indexGroups = (
+    [
+      ["S&P 500", alerts.filter((a) => a.sp500 === true)],
+      ["Not in the S&P 500", alerts.filter((a) => a.sp500 === false)],
+      ["Not tagged (before the S&P 500 tag)", alerts.filter((a) => a.sp500 == null)],
+    ] as [string, AlertRow[]][]
+  ).filter(([, rows]) => rows.length > 0);
   const stale = status && Date.now() - Date.parse(status.updated_at) > 2 * 3_600_000;
   const originGroups: [string, AlertRow[]][] = ORIGINS.map((o): [string, AlertRow[]] => [o, alerts.filter((a) => (a.origin ?? "Other") === o)]).filter(
     ([, rows]) => rows.length > 0,
@@ -174,6 +195,8 @@ function Dashboard({ alerts, misses, status, positions }: { alerts: AlertRow[]; 
 
       {alerts.length > 0 && <Breakdown heading="News · side" groups={groups} />}
       {alerts.length > 0 && <Breakdown heading="News origin" groups={originGroups} />}
+      {alerts.length > 0 && <Breakdown heading="Time of day" groups={timeGroups} />}
+      {alerts.length > 0 && <Breakdown heading="Index" groups={indexGroups} />}
 
       {alerts.length === 0 ? (
         <div className="notice">No alerts yet. They appear here as soon as a stock in the news moves.</div>
@@ -220,6 +243,8 @@ function AlertCard({ a }: { a: AlertRow }) {
           <span className="badge">{pre ? "Pre-open news" : "Intraday news"}</span>
           {a.category && <span className="badge">{a.category}</span>}
           {a.origin && <span className={`badge origin ${a.origin.startsWith("Reactive") ? "late" : ""}`}>{a.origin}</span>}
+          {a.sp500 && <span className="badge">S&amp;P 500</span>}
+          {nyMinutes(a.alerted_at) >= 900 && <span className="badge">Late session</span>}
         </div>
         <div className="when">
           {day(a.alerted_at)} · {clock(a.alerted_at)} ET
@@ -447,6 +472,7 @@ function Missed({ misses }: { misses: MissRow[] }) {
                     </td>
                     <td>
                       <strong>{m.symbol}</strong>
+                      {m.sp500 && <span className="meta">S&amp;P 500</span>}
                     </td>
                     <td className={`num ${tone(m.day_change_pct)}`}>{pct(m.day_change_pct)}</td>
                     <td className="num">
@@ -591,7 +617,7 @@ function OpenPositions({ positions, alerts }: { positions: Positions; alerts: Al
           </table>
         </div>
       )}
-      <p className="footnote">Live from the Alpaca paper account each time the page loads. Positions close automatically about 5 minutes before the market closes.</p>
+      <p className="footnote">Live from the Alpaca paper account each time the page loads. Positions close automatically at the closing price (a market-on-close order sent about 12 minutes before the close).</p>
     </section>
   );
 }

@@ -127,7 +127,6 @@ function countHit(w: Tracking, dir: 1 | -1 | 0, confirmTicks: number): Verdict {
 // Ignore stale prices (halts, illiquid names, outside trading hours).
 const isStale = (s: Snapshot, now: number) => now - s.tradeAt > 5 * 60_000;
 
-/** Advance an intraday watch with a new price. Mutates the watch. */
 /** The move an intraday alert needs: MOVE_PCT, or a quarter of yesterday's range if that's bigger. */
 export const moveThreshold = (s: Pick<Snapshot, "prevRange">, cfg: Pick<Config, "movePct" | "rangeFraction">) =>
   Math.max(cfg.movePct, (s.prevRange ?? 0) * cfg.rangeFraction);
@@ -142,12 +141,22 @@ export function volumeRatio(w: Pick<Watch, "baseVolume" | "baseAt">, s: Pick<Sna
   return (s.dayVolume - w.baseVolume) / ((s.prevVolume / 390) * minutes);
 }
 
+/**
+ * Checks a move must hold for: CONFIRM_TICKS, or `thinConfirmSeconds` worth of checks for thinly
+ * traded stocks, where a single sweep of the book can print far from the real price (CABO).
+ */
+export function confirmChecks(s: Pick<Snapshot, "prevDollarVolume">, cfg: Pick<Config, "confirmTicks"> & Partial<Pick<Config, "thinDollarVolume" | "thinConfirmSeconds" | "pollSeconds">>): number {
+  if (!cfg.thinDollarVolume || !cfg.thinConfirmSeconds || !(s.prevDollarVolume < cfg.thinDollarVolume)) return cfg.confirmTicks;
+  return Math.max(cfg.confirmTicks, Math.ceil(cfg.thinConfirmSeconds / (cfg.pollSeconds || 5)));
+}
+
 /** Advance an intraday watch with a new price. Mutates the watch. */
 export function evaluate(
   w: Watch,
   s: Snapshot,
   now: number,
-  cfg: Pick<Config, "movePct" | "confirmTicks" | "watchMinutes"> & Partial<Pick<Config, "rangeFraction" | "minVolumeRatio">>,
+  cfg: Pick<Config, "movePct" | "confirmTicks" | "watchMinutes"> &
+    Partial<Pick<Config, "rangeFraction" | "minVolumeRatio" | "minDollarsSinceNews" | "thinDollarVolume" | "thinConfirmSeconds" | "pollSeconds">>,
 ): Verdict {
   if (now - w.seenAt > cfg.watchMinutes * 60_000) return "expire";
   if (isStale(s, now)) return "wait";
@@ -162,8 +171,11 @@ export function evaluate(
   const bigEnough = Math.abs(move) >= moveThreshold(s, { movePct: cfg.movePct, rangeFraction: cfg.rangeFraction ?? 0 });
   // A news-driven move comes with a burst of trading; without one it's ordinary noise.
   const ratio = volumeRatio(w, s, now);
-  const volumeOk = !cfg.minVolumeRatio || ratio == null || ratio >= cfg.minVolumeRatio;
-  return countHit(w, bigEnough && volumeOk ? (move > 0 ? 1 : -1) : 0, cfg.confirmTicks);
+  const paceOk = !cfg.minVolumeRatio || ratio == null || ratio >= cfg.minVolumeRatio;
+  // ...and a real amount of it: 900 shares can be "2x normal" on a stock that barely trades (CABO).
+  const since = w.baseVolume != null && s.dayVolume != null ? (s.dayVolume - w.baseVolume) * s.price : null;
+  const dollarsOk = !cfg.minDollarsSinceNews || since == null || since >= cfg.minDollarsSinceNews;
+  return countHit(w, bigEnough && paceOk && dollarsOk ? (move > 0 ? 1 : -1) : 0, confirmChecks(s, cfg));
 }
 
 /** Advance a pre-open watch once its opening range is set. Mutates the watch. */
@@ -199,14 +211,42 @@ export function rideReturn(direction: number, from: number | null, to: number | 
 }
 
 /**
- * Whether to close a paper trade now (call only while the market is open): 5 minutes before the
- * close, after `holdMinutes` if set, or straight away if it was opened on an earlier day and missed
- * its close.
+ * What to do with an open paper trade now (call only while the market is open):
+ * - "now": close at market. It was opened on an earlier day and missed its close, or its fixed
+ *   `holdMinutes` are up, or it's too late for a market-on-close order (under 2 minutes left).
+ * - "moc": send a market-on-close order, `mocLeadMinutes` before the close, so it exits at the
+ *   official closing price.
+ * - "wait": keep holding.
  */
-export function shouldExit(openedAt: number, now: number, closeAt: number, holdMinutes: number): boolean {
-  if (closeAt - now < 5 * 60_000) return true;
-  if (nyDate(openedAt) !== nyDate(now)) return true;
-  return holdMinutes > 0 && now - openedAt >= holdMinutes * 60_000;
+export function exitPlan(openedAt: number, now: number, closeAt: number, holdMinutes: number, mocLeadMinutes: number): "now" | "moc" | "wait" {
+  if (nyDate(openedAt) !== nyDate(now)) return "now";
+  if (holdMinutes > 0 && now - openedAt >= holdMinutes * 60_000) return "now";
+  if (closeAt - now < 2 * 60_000) return "now";
+  if (closeAt - now <= mocLeadMinutes * 60_000) return "moc";
+  return "wait";
+}
+
+/** Why an alert shouldn't be paper-traded, or null to trade it. */
+export function tradeBlock(
+  a: { kind: string; baseline: number; prevClose: number | null },
+  now: number,
+  closeAt: number,
+  cfg: Pick<Config, "tradeCutoffMinutes" | "maxDayMoveToTrade">,
+): string | null {
+  if (closeAt - now < cfg.tradeCutoffMinutes * 60_000) return `after the cutoff (${cfg.tradeCutoffMinutes} min before the close)`;
+  // A stock already far off the previous close is stretched: thin books and violent snap-backs (CABO, −25% when the news hit).
+  if (a.kind === "intraday" && a.prevClose && cfg.maxDayMoveToTrade > 0) {
+    const day = a.baseline / a.prevClose - 1;
+    if (Math.abs(day) >= cfg.maxDayMoveToTrade) return `already ${day > 0 ? "+" : "−"}${Math.abs(day * 100).toFixed(0)}% on the day`;
+  }
+  return null;
+}
+
+/** Limit price for an entry: `slippage` past the alert price, in whole cents (sub-penny below $1). */
+export function entryLimit(price: number, direction: number, slippage: number): number {
+  const p = price * (1 + Math.sign(direction) * slippage);
+  const tick = price >= 1 ? 100 : 10_000;
+  return (direction > 0 ? Math.floor(p * tick) : Math.ceil(p * tick)) / tick;
 }
 
 /**

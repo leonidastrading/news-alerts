@@ -47,6 +47,8 @@ export type AlertRow = {
   entry_submitted_at: string | null;
   entry_filled_at: string | null;
   exit_filled_at: string | null;
+  /** In the S&P 500 when the alert fired (null: list unavailable, or alerts from before it was tracked). */
+  sp500: boolean | null;
 };
 
 // The driver returns timestamps as Date objects; the rest of the app works with ISO strings.
@@ -108,7 +110,8 @@ export async function migrate() {
     ADD COLUMN IF NOT EXISTS prev_day_volume double precision,
     ADD COLUMN IF NOT EXISTS entry_submitted_at timestamptz,
     ADD COLUMN IF NOT EXISTS entry_filled_at timestamptz,
-    ADD COLUMN IF NOT EXISTS exit_filled_at timestamptz`;
+    ADD COLUMN IF NOT EXISTS exit_filled_at timestamptz,
+    ADD COLUMN IF NOT EXISTS sp500 boolean`;
   await sql`CREATE TABLE IF NOT EXISTS misses (
     id serial PRIMARY KEY,
     day date NOT NULL,
@@ -125,7 +128,7 @@ export async function migrate() {
     news_at timestamptz,
     UNIQUE (day, symbol)
   )`;
-  await sql`ALTER TABLE misses ADD COLUMN IF NOT EXISTS origin text`;
+  await sql`ALTER TABLE misses ADD COLUMN IF NOT EXISTS origin text, ADD COLUMN IF NOT EXISTS sp500 boolean`;
   await sql`CREATE TABLE IF NOT EXISTS worker_status (
     id integer PRIMARY KEY,
     updated_at timestamptz NOT NULL,
@@ -160,17 +163,18 @@ export type NewAlert = {
   volumeSince: number | null;
   dayVolume: number | null;
   prevDayVolume: number | null;
+  sp500: boolean | null;
 };
 
 export async function insertAlert(a: NewAlert): Promise<number> {
   const rows = await db()`INSERT INTO alerts
     (kind, symbol, direction, news_id, headline, summary, category, origin, url, source, news_at, news_count, seen_at, alerted_at,
      baseline, price, move_pct, prev_close, open_price, gap_pct, range_high, range_low, range_volume,
-     volume_since, day_volume, prev_day_volume)
+     volume_since, day_volume, prev_day_volume, sp500)
     VALUES (${a.kind}, ${a.symbol}, ${a.direction}, ${a.newsId}, ${a.headline}, ${a.summary}, ${a.category}, ${a.origin}, ${a.url},
             ${a.source}, ${a.newsAt}, ${a.newsCount}, ${a.seenAt.toISOString()}, ${a.alertedAt.toISOString()},
             ${a.baseline}, ${a.price}, ${a.movePct}, ${a.prevClose}, ${a.openPrice}, ${a.gapPct}, ${a.rangeHigh},
-            ${a.rangeLow}, ${a.rangeVolume}, ${a.volumeSince}, ${a.dayVolume}, ${a.prevDayVolume})
+            ${a.rangeLow}, ${a.rangeVolume}, ${a.volumeSince}, ${a.dayVolume}, ${a.prevDayVolume}, ${a.sp500})
     RETURNING id`;
   return rows[0].id as number;
 }
@@ -184,8 +188,8 @@ export async function setTradeStatus(id: number, status: string) {
   await db()`UPDATE alerts SET trade_status = ${status} WHERE id = ${id}`;
 }
 
-export async function setEntryFill(id: number, price: number, filledAt: string | null) {
-  await db()`UPDATE alerts SET entry_price = ${price}, entry_filled_at = ${filledAt} WHERE id = ${id}`;
+export async function setEntryFill(id: number, price: number, filledAt: string | null, qty?: number) {
+  await db()`UPDATE alerts SET entry_price = ${price}, entry_filled_at = ${filledAt}, qty = COALESCE(${qty ?? null}::int, qty) WHERE id = ${id}`;
 }
 
 export async function setTradeClosed(id: number, exitOrderId: string | null, at: Date) {
@@ -236,6 +240,7 @@ export type MissRow = {
   url: string | null;
   news_at: string | null;
   origin: string | null;
+  sp500: boolean | null;
 };
 
 /** Record a missed move, or update it with a bigger move later in the day (the reason stays as first found). */
@@ -252,10 +257,11 @@ export async function upsertMiss(m: {
   url: string | null;
   newsAt: string | null;
   origin: string | null;
+  sp500: boolean | null;
 }) {
-  await db()`INSERT INTO misses (day, symbol, detected_at, day_change_pct, price, prev_close, day_volume, reason_code, reason_text, headline, url, news_at, origin)
+  await db()`INSERT INTO misses (day, symbol, detected_at, day_change_pct, price, prev_close, day_volume, reason_code, reason_text, headline, url, news_at, origin, sp500)
     VALUES (${m.day}, ${m.symbol}, now(), ${m.dayChangePct}, ${m.price}, ${m.prevClose}, ${m.dayVolume}, ${m.reasonCode}, ${m.reasonText},
-            ${m.headline}, ${m.url}, ${m.newsAt}, ${m.origin})
+            ${m.headline}, ${m.url}, ${m.newsAt}, ${m.origin}, ${m.sp500})
     ON CONFLICT (day, symbol) DO UPDATE SET
       day_change_pct = CASE WHEN abs(EXCLUDED.day_change_pct) > abs(misses.day_change_pct) THEN EXCLUDED.day_change_pct ELSE misses.day_change_pct END,
       price = CASE WHEN abs(EXCLUDED.day_change_pct) > abs(misses.day_change_pct) THEN EXCLUDED.price ELSE misses.price END,
@@ -264,9 +270,14 @@ export async function upsertMiss(m: {
 
 export async function recentMisses(days = 30): Promise<MissRow[]> {
   return rowsOut<MissRow>(await db()`SELECT id, to_char(day, 'YYYY-MM-DD') AS day, symbol, detected_at, day_change_pct, price, prev_close,
-      day_volume, reason_code, reason_text, headline, url, news_at, origin
+      day_volume, reason_code, reason_text, headline, url, news_at, origin, sp500
     FROM misses WHERE day > (now() AT TIME ZONE 'America/New_York')::date - ${days}::int
     ORDER BY day DESC, abs(day_change_pct) DESC LIMIT 1000`);
+}
+
+/** A stock that alerted after being recorded as missed earlier in the day isn't a miss. */
+export async function deleteMiss(day: string, symbol: string) {
+  await db()`DELETE FROM misses WHERE day = ${day}::date AND symbol = ${symbol}`;
 }
 
 /** Symbols alerted today (New York date), so they aren't counted as misses. */
