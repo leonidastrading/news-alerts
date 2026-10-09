@@ -94,6 +94,10 @@ test("results from bars", () => {
   assert.equal(priceAfter(min, at, 15), 115);
   assert.equal(priceAfter(min, at, 60), 160);
   assert.equal(priceAfter(min, at, 30), null, "no bar within 10 minutes");
+  // Late-session alert (3:34 PM): +60 min is after the close, so it's the day's last bar.
+  const late = Date.parse("2026-10-09T19:34:00Z");
+  const lateBars = [0, 10, 25, 26].map((m) => ({ t: late + m * 60_000, c: 100 + m }));
+  assert.equal(priceAfter(lateBars, late, 60), 125, "3:59 PM bar, not the 4:00 PM one");
   const daily = ["2026-10-08T04:00:00Z", "2026-10-09T04:00:00Z"].map((d, i) => ({ t: Date.parse(d), c: 50 + i }));
   assert.equal(nextDayClose(daily, at), 51);
   // An alert at 9 PM ET on Oct 8 is still Oct 8 in New York.

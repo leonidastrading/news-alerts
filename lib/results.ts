@@ -1,11 +1,16 @@
 // How an alert turned out: the price 15 and 60 minutes after it, and the next trading day's close.
 import type { Bar } from "./alpaca.ts";
 
-import { nyDate } from "./time.ts";
+import { nyDate, nyToUtc } from "./time.ts";
 
-/** Close of the first 1-minute bar at least `minutes` after `at`, if one printed within 10 minutes of that. */
+/**
+ * Close of the first 1-minute bar at least `minutes` after `at`, if one printed within 10 minutes of
+ * that. When that time falls after the 4:00 PM close (a late-session alert), the day's last bar instead.
+ */
 export function priceAfter(bars: Pick<Bar, "t" | "c">[], at: number, minutes: number): number | null {
   const from = at + minutes * 60_000;
+  const closeAt = nyToUtc(nyDate(at), "16:00");
+  if (at < closeAt && from >= closeAt) return bars.filter((b) => b.t >= at && b.t < closeAt).at(-1)?.c ?? null;
   const bar = bars.find((b) => b.t >= from && b.t < from + 10 * 60_000);
   return bar ? bar.c : null;
 }
