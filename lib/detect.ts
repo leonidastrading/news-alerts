@@ -9,6 +9,7 @@
 //   CONFIRM_TICKS checks, is an alert.
 import type { Config } from "./config.ts";
 import { nyDate } from "./time.ts";
+import { classifyOrigin } from "./origin.ts";
 
 export type NewsItem = {
   id: number;
@@ -67,10 +68,12 @@ export function tickersOf(news: NewsItem, cfg: Pick<Config, "maxSymbolsPerHeadli
 }
 
 /** Tickers to watch for a headline that just arrived during the session, or [] to ignore it. */
-export function symbolsToWatch(news: NewsItem, now: number, cfg: Pick<Config, "maxSymbolsPerHeadline">): string[] {
+export function symbolsToWatch(news: NewsItem, now: number, cfg: Pick<Config, "maxSymbolsPerHeadline"> & { skipReactive?: boolean }): string[] {
   // The stream replays a little history on connect; only act on fresh news.
   const age = now - Date.parse(news.createdAt);
   if (!(age < 10 * 60_000)) return [];
+  // A reactive article ("X stock hits 52-week high after...") reports a move that already happened.
+  if (cfg.skipReactive && classifyOrigin(news) === "Reactive (after the move)") return [];
   return tickersOf(news, cfg);
 }
 

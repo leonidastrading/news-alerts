@@ -21,6 +21,7 @@ export type MissReason = { code: string; text: string };
 export const MISS_LABELS: Record<string, string> = {
   no_news: "No headline tagged with the stock",
   roundup: "Only in roundups or non-news articles",
+  reactive_only: "Only reactive headlines (after the move)",
   not_running: "Monitor wasn't running",
   filtered: "Filtered out (price or liquidity)",
   cooldown: "Already alerted earlier",
@@ -50,6 +51,9 @@ export function missReason(log: DayLog | undefined, monitorStartedAt: number, mo
     };
   }
   const watches = log?.watches ?? [];
+  if (watches.length === 0 && tagged.every((h) => h.origin.startsWith("Reactive"))) {
+    return { code: "reactive_only", text: `Only had reactive headlines, written after it moved (e.g. "${tagged.at(-1)!.headline}").` };
+  }
   if (watches.length === 0) {
     if (tagged.some((h) => h.at < monitorStartedAt)) {
       return { code: "not_running", text: `Headline at ${et(tagged[0].at)} came out before the monitor (re)started at ${et(monitorStartedAt)}.` };

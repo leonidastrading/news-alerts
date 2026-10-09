@@ -32,6 +32,8 @@ export type Config = {
   openWatchMinutes: number;
   /** A break must clear the range high/low by this fraction (0.001 = 0.1%). */
   breakoutBuffer: number;
+  /** Don't start intraday watches from reactive headlines (articles written after a stock already moved). */
+  skipReactive: boolean;
   /** Safety cap: alerts beyond these are recorded but not emailed or traded. */
   maxAlertsPer5Min: number;
   maxAlertsPerDay: number;
@@ -56,6 +58,7 @@ export function loadConfig(): Config {
     openRangeMinutes: num("OPEN_RANGE_MINUTES", 5),
     openWatchMinutes: num("OPEN_WATCH_MINUTES", 60),
     breakoutBuffer: num("BREAKOUT_BUFFER_PCT", 0.1) / 100,
+    skipReactive: (process.env.SKIP_REACTIVE ?? "on").toLowerCase() !== "off",
     maxAlertsPer5Min: num("MAX_ALERTS_PER_5_MIN", 3),
     maxAlertsPerDay: num("MAX_ALERTS_PER_DAY", 20),
     missMovePct: num("MISS_MOVE_PCT", 5) / 100,

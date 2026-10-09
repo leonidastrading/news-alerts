@@ -227,3 +227,10 @@ test("alert safety cap", () => {
   assert.equal(overAlertLimit([now - 6 * 60_000, now - 7 * 60_000, now - 8 * 60_000], now, caps), null);
   assert.match(overAlertLimit([1, 2, 3, 4, 5], now, caps)!, /daily limit/);
 });
+
+test("reactive headlines don't start intraday watches", () => {
+  const h = { ...news(["HUM"]), headline: "Humana Stock Hits 52-Week High After Medicare Ratings Boost" };
+  assert.deepEqual(symbolsToWatch(h, now, { ...cfg, skipReactive: true }), []);
+  assert.deepEqual(symbolsToWatch(h, now, { ...cfg, skipReactive: false }), ["HUM"]);
+  assert.deepEqual(symbolsToWatch({ ...news(["HUM"]), headline: "Humana Raises 2026 Guidance" }, now, { ...cfg, skipReactive: true }), ["HUM"]);
+});

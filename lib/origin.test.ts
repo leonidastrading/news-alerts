@@ -9,6 +9,9 @@ test("news origin from the headline and author", () => {
   assert.equal(o("Verizon, AT&T Shares Are Trading Lower After SpaceX Spectrum Deal"), "Reactive (after the move)");
   assert.equal(o("T, TMUS, VZ Stocks Plunge After-Hours As SpaceX Buys 800 MHz Spectrum"), "Reactive (after the move)");
   assert.equal(o("12 Communication Services Stocks Moving In Thursday's After-Hours Session"), "Reactive (after the move)");
+  assert.equal(o("Humana Stock Hits 52-Week High After Medicare Ratings Boost"), "Reactive (after the move)");
+  assert.equal(o("Humana Soars 16% on Improved Medicare Advantage Star Ratings"), "Reactive (after the move)");
+  assert.equal(o("Alignment Healthcare Sinks 20% as Medicare Plan Downgraded"), "Reactive (after the move)");
   assert.equal(o("Starbucks Weighing Bid For Chipotle, Bloomberg Reports"), "Citing another outlet");
   assert.equal(o("SpaceX In Talks To Buy Spectrum, According To People Familiar"), "Citing another outlet");
   assert.equal(o("Form 4: Director Buys 10,000 Shares Of Acme"), "SEC filing");

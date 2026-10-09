@@ -19,6 +19,7 @@ const code = (log: DayLog | undefined, startedAt = started) => missReason(log, s
 test("why a big mover had no alert", () => {
   assert.equal(code(undefined), "no_news");
   assert.equal(code({ headlines: [h(0, true)], watches: [] }), "roundup");
+  assert.equal(code({ headlines: [{ ...h(0), origin: "Reactive (after the move)" }], watches: [] }), "reactive_only");
   assert.equal(code({ headlines: [h(-200)], watches: [] }, t0), "not_running");
   assert.equal(code({ headlines: [h(0)], watches: [w({ outcome: "filtered: too thinly traded" })] }), "filtered");
   assert.equal(code({ headlines: [h(0)], watches: [w({ outcome: "cooldown" })] }), "cooldown");
