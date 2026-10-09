@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { evaluate, rejectReason, rideReturn, symbolsToWatch, type NewsItem, type Watch } from "./detect.ts";
+import { evaluate, rejectReason, rideReturn, shouldExit, symbolsToWatch, type NewsItem, type Watch } from "./detect.ts";
 import { nextDayClose, priceAfter, resultsDone } from "./results.ts";
 import { alertSubject } from "./email.ts";
 
@@ -73,4 +73,15 @@ test("results from bars", () => {
 test("email subject", () => {
   const s = alertSubject({ symbol: "VZ", movePct: -0.021, minutesAfterNews: 6.2, baseline: 46, price: 45, headline: "SpaceX buys spectrum", summary: "", url: "", source: "", trade: "" });
   assert.equal(s, "VZ −2.1% · 6 min after: SpaceX buys spectrum");
+});
+
+test("paper trades are held to the close by default", () => {
+  const opened = Date.parse("2026-10-08T14:00:00Z"); // 10:00 ET
+  const close = Date.parse("2026-10-08T20:00:00Z"); // 4:00 PM ET
+  assert.equal(shouldExit(opened, Date.parse("2026-10-08T19:30:00Z"), close, 0), false, "3:30 PM: still holding");
+  assert.equal(shouldExit(opened, Date.parse("2026-10-08T19:56:00Z"), close, 0), true, "3:56 PM: close it");
+  assert.equal(shouldExit(opened, Date.parse("2026-10-08T14:31:00Z"), close, 30), true, "fixed 30-minute hold");
+  // Missed the close (monitor was down): close at the next open.
+  const nextClose = Date.parse("2026-10-09T20:00:00Z");
+  assert.equal(shouldExit(opened, Date.parse("2026-10-09T13:31:00Z"), nextClose, 0), true);
 });

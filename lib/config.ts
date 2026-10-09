@@ -26,7 +26,7 @@ export type Config = {
   paperTrading: boolean;
   /** Dollars per paper trade. */
   tradeNotional: number;
-  /** Close each paper trade after this many minutes (and always before the close). */
+  /** Close each paper trade after this many minutes; 0 holds it to the end of the day. Always closed before the close. */
   holdMinutes: number;
 };
 
@@ -42,6 +42,6 @@ export function loadConfig(): Config {
     cooldownMinutes: num("COOLDOWN_MINUTES", 120),
     paperTrading: (process.env.PAPER_TRADING ?? "on").toLowerCase() !== "off",
     tradeNotional: num("TRADE_NOTIONAL", 2000),
-    holdMinutes: num("HOLD_MINUTES", 30),
+    holdMinutes: num("HOLD_MINUTES", 0),
   };
 }

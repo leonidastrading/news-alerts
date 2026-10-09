@@ -15,7 +15,7 @@ Two parts share one Neon Postgres database:
   - Checks prices every 5 seconds (IEX feed). The price at the first check after the headline is the starting
     point; when a stock is 1.5% or more away from it on two checks in a row, that's an alert.
   - On an alert: saves it, places a paper trade in the direction of the move (about $2,000, market order, only
-    during regular hours, closed after 30 minutes or before the close) and emails you.
+    during regular hours, held to the end of the day and closed about 5 minutes before the close) and emails you.
   - Afterwards fills in the trade's fill prices and P&L and the stock's price 15 and 60 minutes after the alert
     and at the next day's close.
 - **Website** (Next.js on Vercel): every alert from the last 30 days, how riding each move would have done at

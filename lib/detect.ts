@@ -1,6 +1,7 @@
 // The detection rules, kept free of I/O so they can be tested: which headlines to watch, which
 // stocks are worth watching, and when a stock's move after a headline becomes an alert.
 import type { Config } from "./config.ts";
+import { nyDate } from "./results.ts";
 
 export type NewsItem = {
   id: number;
@@ -76,4 +77,15 @@ export function evaluate(w: Watch, s: Snapshot, now: number, cfg: Pick<Config, "
 export function rideReturn(direction: number, from: number | null, to: number | null): number | null {
   if (from == null || to == null || !(from > 0)) return null;
   return direction * (to / from - 1);
+}
+
+/**
+ * Whether to close a paper trade now (call only while the market is open): 5 minutes before the
+ * close, after `holdMinutes` if set, or straight away if it was opened on an earlier day and missed
+ * its close.
+ */
+export function shouldExit(openedAt: number, now: number, closeAt: number, holdMinutes: number): boolean {
+  if (closeAt - now < 5 * 60_000) return true;
+  if (nyDate(openedAt) !== nyDate(now)) return true;
+  return holdMinutes > 0 && now - openedAt >= holdMinutes * 60_000;
 }

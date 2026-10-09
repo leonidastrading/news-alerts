@@ -17,7 +17,7 @@ import {
   toNewsItem,
   type Clock,
 } from "../lib/alpaca.ts";
-import { evaluate, rejectReason, symbolsToWatch, type NewsItem, type Snapshot, type Watch } from "../lib/detect.ts";
+import { evaluate, rejectReason, shouldExit, symbolsToWatch, type NewsItem, type Snapshot, type Watch } from "../lib/detect.ts";
 import {
   insertAlert,
   lastAlertTimes,
@@ -211,7 +211,8 @@ async function openTrade(id: number, symbol: string, direction: number, price: n
     const order = await placeMarketOrder(symbol, qty, side);
     await setTradeOpened(id, "open", qty, order.id);
     openTrades.set(id, { symbol, openedAt: Date.now() });
-    return `${direction > 0 ? "bought" : "shorted"} ${qty} shares at market, closing after ${cfg.holdMinutes} min`;
+    const exit = cfg.holdMinutes > 0 ? `after ${cfg.holdMinutes} min` : "just before the close";
+    return `${direction > 0 ? "bought" : "shorted"} ${qty} shares at market, closing ${exit}`;
   } catch (e) {
     noteError(`trade ${symbol}`, e);
     await setTradeOpened(id, "error", null, null).catch(() => {});
@@ -221,11 +222,11 @@ async function openTrade(id: number, symbol: string, direction: number, price: n
 
 async function manageTrades() {
   if (openTrades.size === 0) return;
+  if (!market?.is_open) return;
   const now = Date.now();
-  const closingSoon = market?.is_open && Date.parse(market.next_close) - now < 5 * 60_000;
+  const closeAt = Date.parse(market.next_close);
   for (const [id, t] of openTrades) {
-    if (!market?.is_open) continue;
-    if (now - t.openedAt < cfg.holdMinutes * 60_000 && !closingSoon) continue;
+    if (!shouldExit(t.openedAt, now, closeAt, cfg.holdMinutes)) continue;
     try {
       const order = await closePosition(t.symbol);
       await setTradeClosed(id, order.id, new Date());
