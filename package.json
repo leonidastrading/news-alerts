@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "npm run worker",
+    "start:web": "next start",
     "worker": "node --experimental-strip-types --disable-warning=ExperimentalWarning worker/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test lib/*.test.ts"

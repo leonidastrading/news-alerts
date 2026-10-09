@@ -43,7 +43,9 @@ Trades only ever go to `paper-api.alpaca.markets`; the code has no way to reach 
    `news-alerts` project. Copy its `DATABASE_URL`.
 2. **Alpaca**: Paper Trading → API Keys → generate. Copy the key ID and secret.
 3. **Resend** (email): sign up at resend.com with the address you want alerts sent to, then create an API key.
-4. **Railway**: New Project → Deploy from GitHub repo → this repo. `railway.json` sets the start command.
+4. **Railway**: New Project → Deploy from GitHub repo → this repo. `railway.json` sets the start command, and
+   `npm start` runs the monitor too, in case Railway falls back to it (Vercel doesn't use `npm start`; run the
+   website locally with `npm run dev` or `npm run start:web`).
    Add the variables from `.env.example`.
 
 The monitor creates the database tables the first time it starts.
