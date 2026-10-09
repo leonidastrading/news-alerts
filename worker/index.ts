@@ -108,6 +108,7 @@ const stats = {
   alerts: 0,
   preOpenWatched: 0,
   misses: 0,
+  missScans: 0,
   lastNewsAt: null as string | null,
   lastError: null as string | null,
 };
@@ -444,6 +445,7 @@ async function scanMisses() {
     }
     throw e;
   }
+  stats.missScans++;
   const big = list.filter((m) => US_TICKER.test(m.symbol) && Math.abs(m.percent_change) / 100 >= cfg.missMovePct && m.price >= cfg.minPrice);
   if (big.length === 0) return;
   const [alerted, snaps] = await Promise.all([alertedOn(today), snapshots(big.map((m) => m.symbol))]);
@@ -593,6 +595,7 @@ async function saveStatus() {
       watchingFromOpen: session?.watches.size ?? 0,
       openTrades: openTrades.size,
       market: market?.is_open ?? null,
+      missedMoveCheck: moversAvailable ? "on" : "off (movers list not available on this Alpaca plan)",
     });
   } catch (e) {
     noteError("status", e);
@@ -638,7 +641,14 @@ async function main() {
   every(30, "trades", manageTrades);
   every(300, "missed moves", scanMisses);
   every(300, "follow-up", followUp);
-  every(3600, "status", saveStatus);
+  // Status every 10 minutes while the market is open (so problems show on the dashboard quickly),
+  // hourly otherwise (each write wakes the database).
+  let lastStatusAt = Date.now();
+  every(600, "status", async () => {
+    if (!market?.is_open && Date.now() - lastStatusAt < 55 * 60_000) return;
+    lastStatusAt = Date.now();
+    await saveStatus();
+  });
 }
 
 process.on("unhandledRejection", (e) => noteError("unhandled", e));

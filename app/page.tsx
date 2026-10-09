@@ -110,6 +110,7 @@ function Dashboard({ alerts, misses, status }: { alerts: AlertRow[]; misses: Mis
           <>
             Monitor {stale ? "last" : ""} checked in {ago(status.updated_at)} · news stream {String(status.info.stream)} ·{" "}
             {Number(status.info.newsSeen ?? 0).toLocaleString()} headlines read since it started
+            {status.info.missedMoveCheck && String(status.info.missedMoveCheck) !== "on" ? <> · missed-move check {String(status.info.missedMoveCheck)}</> : null}
             {status.info.lastError ? <> · last error: {String(status.info.lastError)}</> : null}
           </>
         ) : (
