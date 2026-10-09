@@ -32,6 +32,7 @@ import {
   symbolsToWatch,
   usTickers,
   isNotNews,
+  overAlertLimit,
   type GapWatch,
   type NewsItem,
   type Snapshot,
@@ -393,10 +394,27 @@ async function fireBreakout(g: GapWatch, s: Snapshot, now: number) {
   });
 }
 
+// Times of today's emailed/traded alerts, for the safety cap.
+let sentDay = "";
+let sentToday: number[] = [];
+
 async function fire(a: NewAlert) {
   const id = await insertAlert(a);
   stats.alerts++;
   pendingCount++;
+  const now = a.alertedAt.getTime();
+  if (sentDay !== nyDate(now)) {
+    sentDay = nyDate(now);
+    sentToday = [];
+  }
+  const capped = overAlertLimit(sentToday, now, cfg);
+  if (capped) {
+    log(`ALERT (capped: ${capped}) ${a.kind} ${a.symbol} after "${a.headline}"`);
+    stats.lastError = `${new Date(now).toISOString()} alert cap: ${capped}; later alerts are recorded but not emailed or traded`;
+    await setTradeOpened(id, `skipped: ${capped}`, null, null);
+    return;
+  }
+  sentToday.push(now);
   log(`ALERT ${a.kind} ${a.symbol} ${a.direction > 0 ? "up" : "down"} after "${a.headline}"`);
   const trade = cfg.paperTrading ? await openTrade(id, a.symbol, a.direction, a.price) : "off";
   await sendAlertEmail({ ...a, minutesAfterNews: (a.alertedAt.getTime() - Date.parse(a.newsAt)) / 60_000, trade }).catch((e) =>

@@ -174,3 +174,13 @@ export function shouldExit(openedAt: number, now: number, closeAt: number, holdM
   if (nyDate(openedAt) !== nyDate(now)) return true;
   return holdMinutes > 0 && now - openedAt >= holdMinutes * 60_000;
 }
+
+/**
+ * Safety cap against bursts (a bug, a market-wide shock): given the times of today's emailed/traded
+ * alerts, whether another one now would exceed the limits.
+ */
+export function overAlertLimit(sentToday: number[], now: number, cfg: Pick<Config, "maxAlertsPer5Min" | "maxAlertsPerDay">): string | null {
+  if (sentToday.length >= cfg.maxAlertsPerDay) return `daily limit of ${cfg.maxAlertsPerDay} alerts reached`;
+  if (sentToday.filter((t) => now - t < 5 * 60_000).length >= cfg.maxAlertsPer5Min) return `limit of ${cfg.maxAlertsPer5Min} alerts per 5 minutes reached`;
+  return null;
+}

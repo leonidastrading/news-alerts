@@ -5,6 +5,7 @@ import {
   evaluateBreakout,
   isNotNews,
   openingRange,
+  overAlertLimit,
   preOpenNews,
   rejectReason,
   rideReturn,
@@ -217,4 +218,12 @@ test("non-news articles are not watched", () => {
   }
   assert.equal(isNotNews("SpaceX To Acquire 800 MHz Spectrum Portfolio"), false);
   assert.equal(isNotNews("Verizon Q3 EPS $1.19 Beats $1.17 Estimate"), false);
+});
+
+test("alert safety cap", () => {
+  const caps = { maxAlertsPer5Min: 3, maxAlertsPerDay: 5 };
+  assert.equal(overAlertLimit([], now, caps), null);
+  assert.match(overAlertLimit([now - 1000, now - 2000, now - 3000], now, caps)!, /per 5 minutes/);
+  assert.equal(overAlertLimit([now - 6 * 60_000, now - 7 * 60_000, now - 8 * 60_000], now, caps), null);
+  assert.match(overAlertLimit([1, 2, 3, 4, 5], now, caps)!, /daily limit/);
 });
