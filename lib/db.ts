@@ -107,6 +107,22 @@ export async function migrate() {
     ADD COLUMN IF NOT EXISTS entry_submitted_at timestamptz,
     ADD COLUMN IF NOT EXISTS entry_filled_at timestamptz,
     ADD COLUMN IF NOT EXISTS exit_filled_at timestamptz`;
+  await sql`CREATE TABLE IF NOT EXISTS misses (
+    id serial PRIMARY KEY,
+    day date NOT NULL,
+    symbol text NOT NULL,
+    detected_at timestamptz NOT NULL,
+    day_change_pct double precision NOT NULL,
+    price double precision,
+    prev_close double precision,
+    day_volume double precision,
+    reason_code text NOT NULL,
+    reason_text text NOT NULL,
+    headline text,
+    url text,
+    news_at timestamptz,
+    UNIQUE (day, symbol)
+  )`;
   await sql`CREATE TABLE IF NOT EXISTS worker_status (
     id integer PRIMARY KEY,
     updated_at timestamptz NOT NULL,
@@ -199,6 +215,58 @@ export async function lastAlertTimes(): Promise<Record<string, number>> {
   const rows = await db()`SELECT symbol, max(alerted_at) AS at FROM alerts
     WHERE alerted_at > now() - interval '1 day' GROUP BY symbol`;
   return Object.fromEntries(rowsOut<{ symbol: string; at: string }>(rows).map((r) => [r.symbol, Date.parse(r.at)]));
+}
+
+export type MissRow = {
+  id: number;
+  day: string;
+  symbol: string;
+  detected_at: string;
+  day_change_pct: number;
+  price: number | null;
+  prev_close: number | null;
+  day_volume: number | null;
+  reason_code: string;
+  reason_text: string;
+  headline: string | null;
+  url: string | null;
+  news_at: string | null;
+};
+
+/** Record a missed move, or update it with a bigger move later in the day (the reason stays as first found). */
+export async function upsertMiss(m: {
+  day: string;
+  symbol: string;
+  dayChangePct: number;
+  price: number;
+  prevClose: number | null;
+  dayVolume: number | null;
+  reasonCode: string;
+  reasonText: string;
+  headline: string | null;
+  url: string | null;
+  newsAt: string | null;
+}) {
+  await db()`INSERT INTO misses (day, symbol, detected_at, day_change_pct, price, prev_close, day_volume, reason_code, reason_text, headline, url, news_at)
+    VALUES (${m.day}, ${m.symbol}, now(), ${m.dayChangePct}, ${m.price}, ${m.prevClose}, ${m.dayVolume}, ${m.reasonCode}, ${m.reasonText},
+            ${m.headline}, ${m.url}, ${m.newsAt})
+    ON CONFLICT (day, symbol) DO UPDATE SET
+      day_change_pct = CASE WHEN abs(EXCLUDED.day_change_pct) > abs(misses.day_change_pct) THEN EXCLUDED.day_change_pct ELSE misses.day_change_pct END,
+      price = CASE WHEN abs(EXCLUDED.day_change_pct) > abs(misses.day_change_pct) THEN EXCLUDED.price ELSE misses.price END,
+      day_volume = EXCLUDED.day_volume`;
+}
+
+export async function recentMisses(days = 30): Promise<MissRow[]> {
+  return rowsOut<MissRow>(await db()`SELECT id, to_char(day, 'YYYY-MM-DD') AS day, symbol, detected_at, day_change_pct, price, prev_close,
+      day_volume, reason_code, reason_text, headline, url, news_at
+    FROM misses WHERE day > (now() AT TIME ZONE 'America/New_York')::date - ${days}
+    ORDER BY day DESC, abs(day_change_pct) DESC LIMIT 1000`);
+}
+
+/** Symbols alerted today (New York date), so they aren't counted as misses. */
+export async function alertedOn(day: string): Promise<Set<string>> {
+  const rows = await db()`SELECT DISTINCT symbol FROM alerts WHERE (alerted_at AT TIME ZONE 'America/New_York')::date = ${day}::date`;
+  return new Set(rows.map((r) => r.symbol as string));
 }
 
 export async function writeStatus(info: Record<string, unknown>) {

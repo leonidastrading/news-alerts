@@ -32,6 +32,8 @@ export type Config = {
   openWatchMinutes: number;
   /** A break must clear the range high/low by this fraction (0.001 = 0.1%). */
   breakoutBuffer: number;
+  /** Missed moves: a stock up or down at least this much on the day (fraction) with no alert. */
+  missMovePct: number;
   /** Close each paper trade after this many minutes; 0 holds it to the end of the day. Always closed before the close. */
   holdMinutes: number;
 };
@@ -51,6 +53,7 @@ export function loadConfig(): Config {
     openRangeMinutes: num("OPEN_RANGE_MINUTES", 5),
     openWatchMinutes: num("OPEN_WATCH_MINUTES", 60),
     breakoutBuffer: num("BREAKOUT_BUFFER_PCT", 0.1) / 100,
+    missMovePct: num("MISS_MOVE_PCT", 5) / 100,
     holdMinutes: num("HOLD_MINUTES", 0),
   };
 }

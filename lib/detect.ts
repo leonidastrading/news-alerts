@@ -48,9 +48,12 @@ export type GapWatch = Tracking & {
 
 const US_TICKER = /^[A-Z]{1,5}(\.[A-Z])?$/;
 
+/** Every US ticker a headline is tagged with. */
+export const usTickers = (news: NewsItem) => [...new Set(news.symbols.map((s) => s.toUpperCase()))].filter((s) => US_TICKER.test(s));
+
 /** The US tickers a headline is about, or [] for roundups tagged with too many. */
 export function tickersOf(news: NewsItem, cfg: Pick<Config, "maxSymbolsPerHeadline">): string[] {
-  const syms = [...new Set(news.symbols.map((s) => s.toUpperCase()))].filter((s) => US_TICKER.test(s));
+  const syms = usTickers(news);
   return syms.length > cfg.maxSymbolsPerHeadline ? [] : syms;
 }
 

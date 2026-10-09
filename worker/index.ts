@@ -13,6 +13,7 @@ import {
   credentials,
   getOrder,
   hasPosition,
+  movers,
   newsBetween,
   newsSince,
   NEWS_STREAM,
@@ -29,6 +30,7 @@ import {
   rejectReason,
   shouldExit,
   symbolsToWatch,
+  usTickers,
   type GapWatch,
   type NewsItem,
   type Snapshot,
@@ -36,6 +38,7 @@ import {
 } from "../lib/detect.ts";
 import { categorize } from "../lib/category.ts";
 import { nyDate, nyToUtc } from "../lib/time.ts";
+import { missReason, type DayLog, type WatchOutcome } from "../lib/misses.ts";
 import {
   insertAlert,
   lastAlertTimes,
@@ -47,6 +50,8 @@ import {
   setTradeClosed,
   setTradeOpened,
   setTradeStatus,
+  upsertMiss,
+  alertedOn,
   writeStatus,
   type AlertRow,
   type NewAlert,
@@ -57,13 +62,33 @@ import { nextDayClose, priceAfter, resultsDone } from "../lib/results.ts";
 const cfg = loadConfig();
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
 
-const watches = new Map<string, Watch>();
+type TrackedWatch = Watch & { maxMove?: number; preMove?: number | null };
+const watches = new Map<string, TrackedWatch>();
+
+// Every headline and watch for each stock this session, to explain missed moves (see scanMisses).
+// Reset at each open and refilled with the news since the previous close.
+let dayLog = new Map<string, DayLog>();
+const logFor = (symbol: string) => {
+  let l = dayLog.get(symbol);
+  if (!l) dayLog.set(symbol, (l = { headlines: [], watches: [] }));
+  return l;
+};
+function logHeadline(n: NewsItem) {
+  const tickers = usTickers(n);
+  const roundup = tickers.length > cfg.maxSymbolsPerHeadline;
+  for (const t of tickers) logFor(t).headlines.push({ at: Date.parse(n.createdAt), headline: n.headline, url: n.url, roundup });
+}
+function logWatch(symbol: string, w: Omit<WatchOutcome, "endedAt"> & { endedAt?: number }) {
+  logFor(symbol).watches.push({ ...w, endedAt: w.endedAt ?? Date.now() });
+}
 
 // News from while the market was closed, watched from the open.
-type OpenSession = { date: string; openAt: number; rangeEnd: number; endAt: number; ranged: boolean; watches: Map<string, GapWatch> };
+type TrackedGap = GapWatch & { maxMove?: number };
+type OpenSession = { date: string; openAt: number; rangeEnd: number; endAt: number; ranged: boolean; watches: Map<string, TrackedGap> };
 let session: OpenSession | null = null;
 let sessionDate = "";
-const rejectedUntil = new Map<string, number>();
+let prevCloseAt = 0;
+const rejectedUntil = new Map<string, { until: number; reason: string }>();
 const seenNews = new Set<number>();
 let lastAlertAt: Record<string, number> = {};
 let market: Clock | null = null;
@@ -78,6 +103,7 @@ const stats = {
   rejected: 0,
   alerts: 0,
   preOpenWatched: 0,
+  misses: 0,
   lastNewsAt: null as string | null,
   lastError: null as string | null,
 };
@@ -98,11 +124,19 @@ function onNews(n: NewsItem) {
   if (Date.parse(n.createdAt) > lastNewsAt.getTime()) lastNewsAt = new Date(n.createdAt);
   // While the market is closed, news is collected at the open instead (see setUpOpen).
   if (!market?.is_open) return;
+  logHeadline(n);
   const now = Date.now();
   for (const symbol of symbolsToWatch(n, now, cfg)) {
     if (watches.has(symbol) || session?.watches.has(symbol)) continue;
-    if ((rejectedUntil.get(symbol) ?? 0) > now) continue;
-    if ((lastAlertAt[symbol] ?? 0) > now - cfg.cooldownMinutes * 60_000) continue;
+    const rejected = rejectedUntil.get(symbol);
+    if (rejected && rejected.until > now) {
+      logWatch(symbol, { kind: "intraday", startedAt: now, outcome: `filtered: ${rejected.reason}`, maxMove: null, preMove: null });
+      continue;
+    }
+    if ((lastAlertAt[symbol] ?? 0) > now - cfg.cooldownMinutes * 60_000) {
+      logWatch(symbol, { kind: "intraday", startedAt: now, outcome: "cooldown", maxMove: null, preMove: null });
+      continue;
+    }
     watches.set(symbol, { symbol, news: n, seenAt: now, hits: 0, direction: 0 });
     stats.watched++;
   }
@@ -162,24 +196,35 @@ async function checkSession() {
     await setUpOpen(today, now);
   }
   if (session && !session.ranged && now >= session.rangeEnd) await setRanges(session);
-  if (session && now > session.endAt) session = null;
+  if (session && now > session.endAt) {
+    for (const g of session.watches.values()) endGapWatch(g, "expired");
+    session = null;
+  }
+}
+
+function endGapWatch(g: TrackedGap, outcome: string) {
+  const gap = g.prevClose && g.open ? g.open / g.prevClose - 1 : null;
+  logWatch(g.symbol, { kind: "preopen", startedAt: g.seenAt, outcome, maxMove: g.maxMove ?? null, preMove: gap });
 }
 
 async function setUpOpen(today: string, now: number) {
+  dayLog = new Map();
+  missRecorded.clear();
   const days = await calendar(nyDate(now - 10 * 86_400_000), today);
   const todayCal = days.find((d) => d.date === today);
   const prev = days.filter((d) => d.date < today).at(-1);
   if (!todayCal || !prev) return;
   const openAt = nyToUtc(today, todayCal.open);
   const endAt = openAt + cfg.openWatchMinutes * 60_000;
-  if (now >= endAt - 5 * 60_000) return; // started too late in the day to use the open
-  const prevCloseAt = nyToUtc(prev.date, prev.close);
+  prevCloseAt = nyToUtc(prev.date, prev.close);
   const items = await newsBetween(new Date(prevCloseAt), new Date(openAt));
+  items.forEach(logHeadline);
+  if (now >= endAt - 5 * 60_000) return; // started too late in the day to use the open
   const byTicker = [...preOpenNews(items, cfg)]
     .filter(([sym]) => (lastAlertAt[sym] ?? 0) <= now - cfg.cooldownMinutes * 60_000)
     .sort((x, y) => y[1].count - x[1].count)
     .slice(0, 400);
-  const gw = new Map<string, GapWatch>();
+  const gw = new Map<string, TrackedGap>();
   for (const [symbol, { news, count }] of byTicker) {
     gw.set(symbol, { symbol, news, newsCount: count, seenAt: now, hits: 0, direction: 0 });
   }
@@ -199,8 +244,10 @@ async function setRanges(s: OpenSession) {
   for (const [sym, g] of s.watches) {
     const r = openingRange(rangeBars[sym] ?? []);
     const snap = snaps[sym];
-    if (!r || !snap || rejectReason(snap, cfg)) {
+    const reason = !r || !snap ? "no opening-range data" : rejectReason(snap, cfg);
+    if (reason || !r) {
       s.watches.delete(sym);
+      logWatch(sym, { kind: "preopen", startedAt: g.seenAt, outcome: r && snap ? `filtered: ${reason}` : "no opening-range data", maxMove: null, preMove: null });
       continue;
     }
     Object.assign(g, { open: r.open, rangeHigh: r.high, rangeLow: r.low, rangeVolume: r.volume, prevClose: snap.prevClose ?? undefined });
@@ -219,22 +266,36 @@ async function checkPrices() {
   for (const [symbol, w] of watches) {
     const s = snaps[symbol];
     if (!s) {
-      if (now - w.seenAt > cfg.watchMinutes * 60_000) watches.delete(symbol);
+      if (now - w.seenAt > cfg.watchMinutes * 60_000) {
+        watches.delete(symbol);
+        logWatch(symbol, { kind: "intraday", startedAt: w.seenAt, outcome: "expired", maxMove: null, preMove: null });
+      }
       continue;
     }
     if (w.baseline === undefined) {
       const reason = rejectReason(s, cfg);
       if (reason) {
         watches.delete(symbol);
-        rejectedUntil.set(symbol, now + 6 * 3_600_000);
+        rejectedUntil.set(symbol, { until: now + 6 * 3_600_000, reason });
+        logWatch(symbol, { kind: "intraday", startedAt: w.seenAt, outcome: `filtered: ${reason}`, maxMove: null, preMove: null });
         stats.rejected++;
         continue;
       }
     }
+    const hadBaseline = w.baseline !== undefined;
     const verdict = evaluate(w, s, now, cfg);
-    if (verdict === "expire") watches.delete(symbol);
-    else if (verdict === "alert") {
+    if (!hadBaseline && w.baseline !== undefined) w.preMove = s.prevClose ? w.baseline / s.prevClose - 1 : null;
+    if (w.baseline !== undefined && w.lastPrice !== undefined) {
+      const m = w.lastPrice / w.baseline - 1;
+      if (w.maxMove === undefined || Math.abs(m) > Math.abs(w.maxMove)) w.maxMove = m;
+    }
+    const ended = { kind: "intraday" as const, startedAt: w.seenAt, maxMove: w.maxMove ?? null, preMove: w.preMove ?? null };
+    if (verdict === "expire") {
       watches.delete(symbol);
+      logWatch(symbol, { ...ended, outcome: "expired" });
+    } else if (verdict === "alert") {
+      watches.delete(symbol);
+      logWatch(symbol, { ...ended, outcome: "alert" });
       lastAlertAt[symbol] = now;
       await fireIntraday(w, s, now).catch((e) => noteError(`alert ${symbol}`, e));
     }
@@ -244,9 +305,16 @@ async function checkPrices() {
       const s = snaps[symbol];
       if (!s) continue;
       const verdict = evaluateBreakout(g, s, now, gapping.endAt, cfg);
-      if (verdict === "expire") gapping.watches.delete(symbol);
-      else if (verdict === "alert") {
+      if (g.open && g.lastPrice !== undefined) {
+        const m = g.lastPrice / g.open - 1;
+        if (g.maxMove === undefined || Math.abs(m) > Math.abs(g.maxMove)) g.maxMove = m;
+      }
+      if (verdict === "expire") {
         gapping.watches.delete(symbol);
+        endGapWatch(g, "expired");
+      } else if (verdict === "alert") {
+        gapping.watches.delete(symbol);
+        endGapWatch(g, "alert");
         lastAlertAt[symbol] = now;
         await fireBreakout(g, s, now).catch((e) => noteError(`alert ${symbol}`, e));
       }
@@ -325,6 +393,65 @@ async function fire(a: NewAlert) {
   await sendAlertEmail({ ...a, minutesAfterNews: (a.alertedAt.getTime() - Date.parse(a.newsAt)) / 60_000, trade }).catch((e) =>
     noteError(`email ${a.symbol}`, e),
   );
+}
+
+// ---------- Missed moves ----------
+
+const US_TICKER = /^[A-Z]{1,5}(\.[A-Z])?$/;
+const missRecorded = new Map<string, number>(); // symbol -> largest |day change| recorded today
+let moversAvailable = true;
+
+async function scanMisses() {
+  if (!market?.is_open || !moversAvailable) return;
+  const now = Date.now();
+  const today = nyDate(now);
+  if (sessionDate !== today || !prevCloseAt) return;
+  let list;
+  try {
+    list = await movers(50);
+  } catch (e) {
+    if (/HTTP (401|403|404)/.test(String(e))) {
+      moversAvailable = false;
+      noteError("movers (missed-move check turned off: not available on this Alpaca plan)", e);
+      return;
+    }
+    throw e;
+  }
+  const big = list.filter((m) => US_TICKER.test(m.symbol) && Math.abs(m.percent_change) / 100 >= cfg.missMovePct && m.price >= cfg.minPrice);
+  if (big.length === 0) return;
+  const [alerted, snaps] = await Promise.all([alertedOn(today), snapshots(big.map((m) => m.symbol))]);
+  for (const m of big) {
+    const change = m.percent_change / 100;
+    const snap = snaps[m.symbol];
+    if (alerted.has(m.symbol) || watches.has(m.symbol) || session?.watches.has(m.symbol)) continue;
+    if (!snap || snap.prevDollarVolume < cfg.minIexDollarVolume) continue; // too thin to have traded anyway
+    const prevAbs = missRecorded.get(m.symbol);
+    if (prevAbs !== undefined && Math.abs(change) < prevAbs + 0.01) continue;
+    let log = dayLog.get(m.symbol);
+    if (!log) {
+      // Nothing in memory (e.g. the monitor restarted): ask the news API directly.
+      const items = await newsBetween(new Date(prevCloseAt), new Date(now), 2, [m.symbol]);
+      items.forEach(logHeadline);
+      log = dayLog.get(m.symbol);
+    }
+    const reason = missReason(log, Date.parse(stats.startedAt), cfg.movePct);
+    const h = log?.headlines.filter((x) => !x.roundup).at(-1) ?? log?.headlines.at(-1);
+    await upsertMiss({
+      day: today,
+      symbol: m.symbol,
+      dayChangePct: change,
+      price: m.price,
+      prevClose: snap.prevClose,
+      dayVolume: snap.dayVolume,
+      reasonCode: reason.code,
+      reasonText: reason.text,
+      headline: h?.headline ?? null,
+      url: h?.url ?? null,
+      newsAt: h ? new Date(h.at).toISOString() : null,
+    });
+    missRecorded.set(m.symbol, Math.abs(change));
+    stats.misses++;
+  }
 }
 
 // ---------- Paper trades ----------
@@ -481,6 +608,7 @@ async function main() {
     market = await clock();
   });
   every(30, "trades", manageTrades);
+  every(300, "missed moves", scanMisses);
   every(300, "follow-up", followUp);
   every(3600, "status", saveStatus);
 }

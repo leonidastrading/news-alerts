@@ -1,4 +1,5 @@
-import { readStatus, recentAlerts, type AlertRow } from "@/lib/db";
+import { readStatus, recentAlerts, recentMisses, type AlertRow, type MissRow } from "@/lib/db";
+import { MISS_LABELS } from "@/lib/misses";
 import { rideReturn } from "@/lib/detect";
 
 export const dynamic = "force-dynamic";
@@ -31,13 +32,17 @@ const ago = (iso: string) => {
 };
 
 type Status = Awaited<ReturnType<typeof readStatus>>;
-type Loaded = { alerts: AlertRow[]; status: Status } | { error: string };
+type Loaded = { alerts: AlertRow[]; misses: MissRow[]; status: Status } | { error: string };
 
 async function load(): Promise<Loaded> {
   if (!process.env.DATABASE_URL) return { error: "No database connected yet. Connect the Neon database to this project in Vercel." };
   try {
-    const [alerts, status] = await Promise.all([recentAlerts(30), readStatus()]);
-    return { alerts, status };
+    const [alerts, status, misses] = await Promise.all([
+      recentAlerts(30),
+      readStatus(),
+      recentMisses(30).catch(() => [] as MissRow[]), // table appears once the updated monitor starts
+    ]);
+    return { alerts, misses, status };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (/relation .* does not exist/.test(msg)) return { error: "The database is empty. It's set up the first time the monitor starts on Railway." };
@@ -59,7 +64,7 @@ export default async function Page() {
           day.
         </p>
       </header>
-      {"error" in data ? <div className="notice">{data.error}</div> : <Dashboard alerts={data.alerts} status={data.status} />}
+      {"error" in data ? <div className="notice">{data.error}</div> : <Dashboard alerts={data.alerts} misses={data.misses} status={data.status} />}
     </>
   );
 }
@@ -84,7 +89,7 @@ function summarize(alerts: AlertRow[]) {
   };
 }
 
-function Dashboard({ alerts, status }: { alerts: AlertRow[]; status: Status }) {
+function Dashboard({ alerts, misses, status }: { alerts: AlertRow[]; misses: MissRow[]; status: Status }) {
   const all = summarize(alerts);
   const stale = status && Date.now() - Date.parse(status.updated_at) > 2 * 3_600_000;
   const groups: [string, AlertRow[]][] = [
@@ -131,6 +136,11 @@ function Dashboard({ alerts, status }: { alerts: AlertRow[]; status: Status }) {
           <span className="value">{all.kept1d}</span>
           <span className="sub">avg {pct(all.avg1d, 2)} riding the move</span>
         </div>
+        <a className="tile link" href="#missed">
+          <span className="label">Missed moves</span>
+          <span className="value">{misses.length}</span>
+          <span className="sub">stocks ±{process.env.MISS_MOVE_PCT ?? "5"}% on the day with no alert</span>
+        </a>
       </section>
 
       {alerts.length > 0 && (
@@ -178,6 +188,8 @@ function Dashboard({ alerts, status }: { alerts: AlertRow[]; status: Status }) {
           ))}
         </div>
       )}
+      <Missed misses={misses} />
+
       <p className="footnote">
         Times are New York time. Prices and volumes are from IEX, a single exchange (about 2–3% of all US trading), so volumes are a
         fraction of the consolidated tape and thin stocks can print a little off the consolidated price. &ldquo;Riding the move&rdquo;
@@ -390,5 +402,88 @@ function Ride({ label, a, later }: { label: string; a: AlertRow; later: number |
         {later != null && <span className="meta-inline"> {usd(later)}</span>}
       </dd>
     </div>
+  );
+}
+
+function Missed({ misses }: { misses: MissRow[] }) {
+  const counts = new Map<string, number>();
+  for (const m of misses) counts.set(m.reason_code, (counts.get(m.reason_code) ?? 0) + 1);
+  const ranked = [...counts].sort((a, b) => b[1] - a[1]);
+  return (
+    <section id="missed" className="missed">
+      <h2>Missed moves</h2>
+      <p className="section-lede">
+        Every 5 minutes during the session the monitor checks the day&rsquo;s biggest gainers and losers. A stock that&rsquo;s up or down{" "}
+        {process.env.MISS_MOVE_PCT ?? "5"}% or more, trades enough to have been watched and had no alert is recorded here with the
+        reason it was missed.
+      </p>
+      {misses.length === 0 ? (
+        <div className="notice">No missed moves recorded yet.</div>
+      ) : (
+        <>
+          <div className="reasons">
+            {ranked.map(([code, n]) => (
+              <span key={code} className="reason">
+                <strong>{n}</strong> {MISS_LABELS[code] ?? code}
+              </span>
+            ))}
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Day</th>
+                  <th>Stock</th>
+                  <th className="num">Day move</th>
+                  <th className="num">Price</th>
+                  <th className="num">IEX volume</th>
+                  <th>Why no alert</th>
+                  <th>Latest headline</th>
+                </tr>
+              </thead>
+              <tbody>
+                {misses.map((m) => (
+                  <tr key={m.id}>
+                    <td className="nowrap">
+                      {new Date(`${m.day}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}
+                      <span className="meta">first seen {clock(m.detected_at)}</span>
+                    </td>
+                    <td>
+                      <strong>{m.symbol}</strong>
+                    </td>
+                    <td className={`num ${tone(m.day_change_pct)}`}>{pct(m.day_change_pct)}</td>
+                    <td className="num">
+                      {usd(m.price)}
+                      <span className="meta">prev {usd(m.prev_close)}</span>
+                    </td>
+                    <td className="num">{shares(m.day_volume)}</td>
+                    <td className="why-cell">
+                      <span className="badge">{MISS_LABELS[m.reason_code] ?? m.reason_code}</span>
+                      <span className="meta">{m.reason_text}</span>
+                    </td>
+                    <td className="headline">
+                      {m.headline ? (
+                        <>
+                          <a href={m.url ?? "#"} target="_blank" rel="noreferrer">
+                            {m.headline}
+                          </a>
+                          {m.news_at && (
+                            <span className="meta">
+                              {day(m.news_at)} {clock(m.news_at)} ET
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="meta">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </section>
   );
 }

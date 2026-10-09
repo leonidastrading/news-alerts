@@ -47,13 +47,23 @@ h1 { margin: 0; font-size: clamp(26px, 4vw, 34px); line-height: 1.15; letter-spa
 .status.warn { color: var(--warn); }
 .notice { margin: 16px 0; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--ink-2); }
 
-.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+.tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
 .tile { display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .tile .label { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
 .tile .value { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .tile .sub { font-size: 13px; color: var(--muted); }
 
+.tile.link { color: inherit; }
+.tile.link:hover { text-decoration: none; border-color: var(--accent); }
 .breakdown { margin-bottom: 20px; }
+.missed { margin-top: 32px; }
+.missed h2 { margin: 0 0 4px; font-size: 20px; letter-spacing: -0.01em; }
+.section-lede { margin: 0 0 12px; color: var(--ink-2); font-size: 14px; max-width: 820px; }
+.reasons { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.reason { padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); font-size: 13px; color: var(--ink-2); }
+.reason strong { color: var(--ink); margin-right: 2px; }
+.why-cell { min-width: 220px; max-width: 360px; }
+.why-cell .meta { margin-top: 4px; }
 .breakdown td:first-child { white-space: nowrap; }
 
 .alerts { display: grid; gap: 16px; }
@@ -96,6 +106,10 @@ td { padding: 12px; border-top: 1px solid var(--border); vertical-align: top; }
 .neg { color: var(--neg); }
 .footnote { margin: 12px 0 0; font-size: 13px; color: var(--muted); max-width: 820px; }
 .footer { padding: 32px 0 48px; color: var(--muted); font-size: 13px; }
+
+@media (max-width: 1100px) {
+  .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 
 @media (max-width: 900px) {
   .grid { grid-template-columns: 1fr; }

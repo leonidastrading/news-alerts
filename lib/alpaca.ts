@@ -59,12 +59,13 @@ export async function newsSince(start: Date): Promise<NewsItem[]> {
 }
 
 /** All news published between `start` and `end` (up to `maxPages` × 50 items), oldest first. */
-export async function newsBetween(start: Date, end: Date, maxPages = 30): Promise<NewsItem[]> {
+export async function newsBetween(start: Date, end: Date, maxPages = 30, symbols?: string[]): Promise<NewsItem[]> {
   const out: NewsItem[] = [];
   let token: string | undefined;
   for (let page = 0; page < maxPages; page++) {
     const q = new URLSearchParams({ start: start.toISOString(), end: end.toISOString(), sort: "asc", limit: "50", include_content: "false" });
     if (token) q.set("page_token", token);
+    if (symbols?.length) q.set("symbols", symbols.join(","));
     const r = await call<{ news: RawNews[]; next_page_token?: string | null }>(DATA, `/v1beta1/news?${q}`);
     out.push(...(r.news ?? []).map(toNewsItem));
     token = r.next_page_token ?? undefined;
@@ -133,6 +134,13 @@ export async function barsMulti(symbols: string[], timeframe: "1Min" | "1Day", s
 
 export async function bars(symbol: string, timeframe: "1Min" | "1Day", start: Date, end: Date): Promise<Bar[]> {
   return (await barsMulti([symbol], timeframe, start, end))[symbol] ?? [];
+}
+
+/** The day's biggest gainers and losers (percent_change is in percent). */
+export type Mover = { symbol: string; percent_change: number; change: number; price: number };
+export async function movers(top = 50): Promise<Mover[]> {
+  const r = await call<{ gainers?: Mover[]; losers?: Mover[] }>(DATA, `/v1beta1/screener/stocks/movers?top=${top}`);
+  return [...(r.gainers ?? []), ...(r.losers ?? [])];
 }
 
 // ---------- Paper trading ----------

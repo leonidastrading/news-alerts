@@ -22,6 +22,10 @@ Two parts share one Neon Postgres database:
     during regular hours, held to the end of the day and closed about 5 minutes before the close) and emails you.
   - Afterwards fills in the trade's fill prices and P&L and the stock's price 15 and 60 minutes after the alert
     and at the next day's close.
+- **Missed moves**: every 5 minutes during the session the monitor checks Alpaca's top gainers and losers. A
+  stock up or down 5% or more on the day, liquid enough to have been watched, with no alert, is recorded with
+  why it was missed: no headline tagged with it, only in roundups, filtered out, already alerted, moved before
+  the headline, watched but the move came outside the 30-minute window, or pre-open news with no range break.
 - **Website** (Next.js on Vercel): every alert from the last 30 days as a card with the headline, its category,
   source and summary; a timeline (published, received, alert, entry sent and filled, exit sent and filled);
   price and gap; IEX volume; the paper trade's fills, slippage and P&L; and how riding the move would have done at
