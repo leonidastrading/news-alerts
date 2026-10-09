@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   evaluate,
   evaluateBreakout,
+  isNotNews,
   openingRange,
   preOpenNews,
   rejectReason,
@@ -189,4 +190,31 @@ test("New York wall-clock times to UTC", () => {
   assert.equal(new Date(nyToUtc("2026-10-09", "09:30")).toISOString(), "2026-10-09T13:30:00.000Z"); // EDT
   assert.equal(new Date(nyToUtc("2026-12-09", "09:30")).toISOString(), "2026-12-09T14:30:00.000Z"); // EST
   assert.equal(new Date(nyToUtc("2026-11-27", "13:00")).toISOString(), "2026-11-27T18:00:00.000Z"); // half day
+});
+
+test("a stock already outside its range when first seen must come back inside before a break counts", () => {
+  const g: GapWatch = { symbol: "TROX", news: news(["TROX"]), newsCount: 1, seenAt: now, hits: 0, direction: 0, rangeHigh: 10, rangeLow: 9 };
+  const end = now + 55 * 60_000;
+  const at = (price: number, sec: number) => evaluateBreakout(g, snap(price, now + sec * 1000), now + sec * 1000, end, cfg);
+  assert.equal(at(8.5, 0), "wait", "outside on first look: not armed");
+  assert.equal(at(8.4, 5), "wait");
+  assert.equal(at(8.3, 10), "wait", "no alert however long it stays out");
+  assert.equal(at(9.5, 15), "wait", "back inside: armed");
+  assert.equal(at(8.9, 20), "wait");
+  assert.equal(at(8.8, 25), "alert", "fresh break down");
+});
+
+test("non-news articles are not watched", () => {
+  for (const h of [
+    "Tronox Holdings Reports Q2 2026 Results: Full Earnings Call Transcript",
+    "Full Transcript: PENN Entertainment Q2 2026 Earnings Call",
+    "Transcript: Allstate Q2 2026 Earnings Conference Call",
+    "Performance Comparison: Airbnb And Competitors In Hotels, Restaurants & Leisure Industry",
+    "Here's How Much You Would Have Made Owning Nvidia Stock In The Last 10 Years",
+  ]) {
+    assert.ok(isNotNews(h), h);
+    assert.deepEqual(symbolsToWatch({ ...news(["X"]), headline: h }, now, cfg), [], h);
+  }
+  assert.equal(isNotNews("SpaceX To Acquire 800 MHz Spectrum Portfolio"), false);
+  assert.equal(isNotNews("Verizon Q3 EPS $1.19 Beats $1.17 Estimate"), false);
 });

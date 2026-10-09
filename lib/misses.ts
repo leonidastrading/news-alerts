@@ -20,7 +20,7 @@ export type MissReason = { code: string; text: string };
 
 export const MISS_LABELS: Record<string, string> = {
   no_news: "No headline tagged with the stock",
-  roundup: "Only in roundup headlines",
+  roundup: "Only in roundups or non-news articles",
   not_running: "Monitor wasn't running",
   filtered: "Filtered out (price or liquidity)",
   cooldown: "Already alerted earlier",
@@ -44,7 +44,10 @@ export function missReason(log: DayLog | undefined, monitorStartedAt: number, mo
   }
   const tagged = headlines.filter((h) => !h.roundup);
   if (tagged.length === 0) {
-    return { code: "roundup", text: `Only appeared in roundup headlines tagged with many tickers (e.g. "${headlines.at(-1)!.headline}").` };
+    return {
+      code: "roundup",
+      text: `Only appeared in roundups tagged with many tickers or in non-news articles like call transcripts (e.g. "${headlines.at(-1)!.headline}").`,
+    };
   }
   const watches = log?.watches ?? [];
   if (watches.length === 0) {

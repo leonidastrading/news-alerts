@@ -31,6 +31,7 @@ import {
   shouldExit,
   symbolsToWatch,
   usTickers,
+  isNotNews,
   type GapWatch,
   type NewsItem,
   type Snapshot,
@@ -76,7 +77,7 @@ const logFor = (symbol: string) => {
 };
 function logHeadline(n: NewsItem) {
   const tickers = usTickers(n);
-  const roundup = tickers.length > cfg.maxSymbolsPerHeadline;
+  const roundup = tickers.length > cfg.maxSymbolsPerHeadline || isNotNews(n.headline);
   const origin = classifyOrigin(n);
   for (const t of tickers) logFor(t).headlines.push({ at: Date.parse(n.createdAt), headline: n.headline, url: n.url, roundup, origin });
 }
@@ -221,7 +222,11 @@ async function setUpOpen(today: string, now: number) {
   prevCloseAt = nyToUtc(prev.date, prev.close);
   const items = await newsBetween(new Date(prevCloseAt), new Date(openAt));
   items.forEach(logHeadline);
-  if (now >= endAt - 5 * 60_000) return; // started too late in the day to use the open
+  // Started well after the opening range ended (e.g. a redeploy mid-morning): the range is stale, skip today.
+  if (now > openAt + (cfg.openRangeMinutes + 5) * 60_000) {
+    log("open: started too late to use today's opening range; pre-open news is only logged");
+    return;
+  }
   const byTicker = [...preOpenNews(items, cfg)]
     .filter(([sym]) => (lastAlertAt[sym] ?? 0) <= now - cfg.cooldownMinutes * 60_000)
     .sort((x, y) => y[1].count - x[1].count)

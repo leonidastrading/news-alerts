@@ -45,6 +45,8 @@ export type GapWatch = Tracking & {
   rangeHigh?: number;
   rangeLow?: number;
   rangeVolume?: number;
+  /** Set once a price inside the opening range has been seen; only breaks after that count. */
+  armed?: boolean;
 };
 
 const US_TICKER = /^[A-Z]{1,5}(\.[A-Z])?$/;
@@ -52,8 +54,14 @@ const US_TICKER = /^[A-Z]{1,5}(\.[A-Z])?$/;
 /** Every US ticker a headline is tagged with. */
 export const usTickers = (news: NewsItem) => [...new Set(news.symbols.map((s) => s.toUpperCase()))].filter((s) => US_TICKER.test(s));
 
-/** The US tickers a headline is about, or [] for roundups tagged with too many. */
+// Articles that don't explain a move: call transcripts, comparisons, explainers, data roundups.
+const NOT_NEWS =
+  /\b(transcript|earnings call|conference call|performance comparison|competitors in|in focus|stocks to watch|market (wrap|recap|update)|(unusual )?options activity|whale|short interest|technical analysis|price (prediction|forecast)|p\/e ratio|insights? into|analyzing|a look at|peeling back|deep dive|here'?s how much|if you invested|\d+ (stocks|etfs)|what to expect|earnings preview|ahead of earnings|key takeaways)\b/i;
+export const isNotNews = (headline: string) => NOT_NEWS.test(headline);
+
+/** The US tickers a headline is about, or [] for roundups tagged with too many and for non-news articles. */
 export function tickersOf(news: NewsItem, cfg: Pick<Config, "maxSymbolsPerHeadline">): string[] {
+  if (isNotNews(news.headline)) return [];
   const syms = usTickers(news);
   return syms.length > cfg.maxSymbolsPerHeadline ? [] : syms;
 }
@@ -130,6 +138,12 @@ export function evaluateBreakout(g: GapWatch, s: Snapshot, now: number, endAt: n
   if (g.rangeHigh === undefined || g.rangeLow === undefined || isStale(s, now)) return "wait";
   g.lastPrice = s.price;
   const dir = s.price > g.rangeHigh * (1 + cfg.breakoutBuffer) ? 1 : s.price < g.rangeLow * (1 - cfg.breakoutBuffer) ? -1 : 0;
+  // A stock already outside its range when we first look (e.g. the monitor started late) hasn't
+  // broken out in front of us: wait until it trades back inside, then count a fresh break.
+  if (!g.armed) {
+    if (dir === 0) g.armed = true;
+    return "wait";
+  }
   return countHit(g, dir, cfg.confirmTicks);
 }
 
