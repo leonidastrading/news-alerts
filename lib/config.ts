@@ -8,6 +8,10 @@ const num = (name: string, fallback: number) => {
 export type Config = {
   /** Alert when price moves at least this much (fraction, 0.015 = 1.5%) from where it was when the news arrived. */
   movePct: number;
+  /** The move must also be at least this fraction of yesterday's high-low range (volatile stocks need bigger moves). */
+  rangeFraction: number;
+  /** Volume since the headline must be at least this multiple of the stock's normal pace (yesterday's volume per minute). */
+  minVolumeRatio: number;
   /** Consecutive price checks that must agree before alerting (filters one-off prints). */
   confirmTicks: number;
   /** How long to watch a stock after a headline, in minutes. */
@@ -46,6 +50,8 @@ export type Config = {
 export function loadConfig(): Config {
   return {
     movePct: num("MOVE_PCT", 1.5) / 100,
+    rangeFraction: num("RANGE_FRACTION", 0.25),
+    minVolumeRatio: num("MIN_VOLUME_RATIO", 2),
     confirmTicks: num("CONFIRM_TICKS", 2),
     watchMinutes: num("WATCH_MINUTES", 30),
     pollSeconds: num("POLL_SECONDS", 5),

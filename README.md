@@ -13,7 +13,9 @@ Two parts share one Neon Postgres database:
   - For every fresh headline tagged with 1–4 US tickers, watches those stocks for 30 minutes. Roundups tagged
     with many tickers, stocks under $3 and thinly traded stocks are skipped.
   - Checks prices every 5 seconds (IEX feed). The price at the first check after the headline is the starting
-    point; when a stock is 1.5% or more away from it on two checks in a row, that's an alert.
+    point; when a stock is 1.5% or more away from it (or a quarter of yesterday's high-low range, if that's
+    bigger) on two checks in a row, with volume since the headline at least twice its normal pace, that's an
+    alert. Reactive articles ("X stock jumps after…") don't start watches.
   - News from while the market is closed (after the close, overnight, pre-market) is collected at the open:
     every stock with headlines since the previous close gets an opening range (its high and low over the first
     5 minutes). A break above the high or below the low, held for two checks, before 10:30 is an alert. The

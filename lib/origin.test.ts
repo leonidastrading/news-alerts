@@ -22,3 +22,8 @@ test("news origin from the headline and author", () => {
   assert.equal(o("Acme Therapeutics Announces Positive Phase 3 Topline Results"), "Press release");
   assert.equal(o("SpaceX To Acquire 800 MHz Spectrum Portfolio From Grain Management"), "Other");
 });
+
+test("headline entities are decoded", async () => {
+  const { decodeEntities } = await import("./alpaca.ts");
+  assert.equal(decodeEntities("Would Be the &#39;Ultimate Trap,&#39; Analyst Cautions &amp; More"), "Would Be the 'Ultimate Trap,' Analyst Cautions & More");
+});

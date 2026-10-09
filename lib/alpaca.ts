@@ -42,10 +42,22 @@ type RawNews = {
   created_at: string;
 };
 
+// Benzinga headlines arrive HTML-encoded ("&#39;", "&amp;").
+export const decodeEntities = (s: string) =>
+  s
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
+
 export const toNewsItem = (n: RawNews): NewsItem => ({
   id: n.id,
-  headline: n.headline,
-  summary: n.summary ?? "",
+  headline: decodeEntities(n.headline),
+  summary: decodeEntities(n.summary ?? ""),
   url: n.url ?? "",
   source: n.source ?? "",
   author: n.author ?? "",
@@ -103,6 +115,7 @@ export async function snapshots(symbols: string[]): Promise<Record<string, Snaps
         prevClose: prev?.c ?? null,
         dayVolume: s.dailyBar?.v ?? null,
         prevVolume: prev?.v ?? null,
+        prevRange: prev && prev.c > 0 ? (prev.h - prev.l) / prev.c : null,
       };
     }
   }

@@ -36,6 +36,9 @@ type Tracking = {
 export type Watch = Tracking & {
   /** Price when the headline arrived: the first fresh trade we see after it. */
   baseline?: number;
+  /** IEX day volume when the baseline was taken, to measure volume since the headline. */
+  baseVolume?: number;
+  baseAt?: number;
 };
 
 export type GapWatch = Tracking & {
@@ -100,6 +103,8 @@ export type Snapshot = {
   /** Shares traded today / yesterday on IEX. */
   dayVolume: number | null;
   prevVolume: number | null;
+  /** Yesterday's (high - low) / close. */
+  prevRange: number | null;
 };
 
 /** Why a stock shouldn't be watched, or null if it should. */
@@ -123,16 +128,42 @@ function countHit(w: Tracking, dir: 1 | -1 | 0, confirmTicks: number): Verdict {
 const isStale = (s: Snapshot, now: number) => now - s.tradeAt > 5 * 60_000;
 
 /** Advance an intraday watch with a new price. Mutates the watch. */
-export function evaluate(w: Watch, s: Snapshot, now: number, cfg: Pick<Config, "movePct" | "confirmTicks" | "watchMinutes">): Verdict {
+/** The move an intraday alert needs: MOVE_PCT, or a quarter of yesterday's range if that's bigger. */
+export const moveThreshold = (s: Pick<Snapshot, "prevRange">, cfg: Pick<Config, "movePct" | "rangeFraction">) =>
+  Math.max(cfg.movePct, (s.prevRange ?? 0) * cfg.rangeFraction);
+
+/**
+ * Volume since the headline relative to the stock's normal pace (yesterday's IEX volume spread over
+ * the 390-minute session). Null when there isn't the data to tell.
+ */
+export function volumeRatio(w: Pick<Watch, "baseVolume" | "baseAt">, s: Pick<Snapshot, "dayVolume" | "prevVolume">, now: number): number | null {
+  if (w.baseVolume == null || w.baseAt == null || s.dayVolume == null || !s.prevVolume) return null;
+  const minutes = Math.max(1, (now - w.baseAt) / 60_000);
+  return (s.dayVolume - w.baseVolume) / ((s.prevVolume / 390) * minutes);
+}
+
+/** Advance an intraday watch with a new price. Mutates the watch. */
+export function evaluate(
+  w: Watch,
+  s: Snapshot,
+  now: number,
+  cfg: Pick<Config, "movePct" | "confirmTicks" | "watchMinutes"> & Partial<Pick<Config, "rangeFraction" | "minVolumeRatio">>,
+): Verdict {
   if (now - w.seenAt > cfg.watchMinutes * 60_000) return "expire";
   if (isStale(s, now)) return "wait";
   if (w.baseline === undefined) {
     w.baseline = s.price;
+    w.baseVolume = s.dayVolume ?? undefined;
+    w.baseAt = now;
     return "wait";
   }
   w.lastPrice = s.price;
   const move = s.price / w.baseline - 1;
-  return countHit(w, Math.abs(move) >= cfg.movePct ? (move > 0 ? 1 : -1) : 0, cfg.confirmTicks);
+  const bigEnough = Math.abs(move) >= moveThreshold(s, { movePct: cfg.movePct, rangeFraction: cfg.rangeFraction ?? 0 });
+  // A news-driven move comes with a burst of trading; without one it's ordinary noise.
+  const ratio = volumeRatio(w, s, now);
+  const volumeOk = !cfg.minVolumeRatio || ratio == null || ratio >= cfg.minVolumeRatio;
+  return countHit(w, bigEnough && volumeOk ? (move > 0 ? 1 : -1) : 0, cfg.confirmTicks);
 }
 
 /** Advance a pre-open watch once its opening range is set. Mutates the watch. */

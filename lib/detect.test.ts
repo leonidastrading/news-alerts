@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   evaluate,
   evaluateBreakout,
+  moveThreshold,
+  volumeRatio,
   isNotNews,
   openingRange,
   overAlertLimit,
@@ -39,6 +41,7 @@ const snap = (price: number, at: number, extra: Partial<Snapshot> = {}): Snapsho
   prevClose: null,
   dayVolume: null,
   prevVolume: null,
+  prevRange: null,
   ...extra,
 });
 
@@ -233,4 +236,32 @@ test("reactive headlines don't start intraday watches", () => {
   assert.deepEqual(symbolsToWatch(h, now, { ...cfg, skipReactive: true }), []);
   assert.deepEqual(symbolsToWatch(h, now, { ...cfg, skipReactive: false }), ["HUM"]);
   assert.deepEqual(symbolsToWatch({ ...news(["HUM"]), headline: "Humana Raises 2026 Guidance" }, now, { ...cfg, skipReactive: true }), ["HUM"]);
+});
+
+test("volatile stocks need bigger moves", () => {
+  const c = { movePct: 0.015, rangeFraction: 0.25 };
+  assert.equal(moveThreshold({ prevRange: 0.02 }, c), 0.015, "calm stock: 1.5%");
+  assert.ok(Math.abs(moveThreshold({ prevRange: 0.12 }, c) - 0.03) < 1e-12, "12% daily range: 3%");
+  assert.equal(moveThreshold({ prevRange: null }, c), 0.015);
+});
+
+test("a move without a burst of volume is not an alert (PURR)", () => {
+  // PURR: yesterday 815K IEX shares (~2.1K a minute); 34.9K in 11 minutes is ~1.5x pace.
+  const c = { ...cfg, rangeFraction: 0.25, minVolumeRatio: 2 };
+  const base = { prevVolume: 815_300, prevRange: 0.04 };
+  const w: Watch = { symbol: "PURR", news: news(["PURR"]), seenAt: now, hits: 0, direction: 0 };
+  const at = (price: number, min: number, dayVolume: number) =>
+    evaluate(w, snap(price, now + min * 60_000, { ...base, dayVolume }), now + min * 60_000, c);
+  assert.equal(at(11.16, 0, 66_800), "wait"); // baseline
+  assert.equal(at(11.34, 11, 101_700), "wait"); // +1.6%, volume 1.5x pace
+  assert.equal(at(11.35, 11.1, 101_800), "wait");
+  assert.ok(Math.abs(volumeRatio(w, { dayVolume: 101_700, prevVolume: 815_300 }, now + 11 * 60_000)! - 1.51) < 0.01);
+
+  // Same move on heavy volume alerts.
+  const v: Watch = { symbol: "PURR", news: news(["PURR"]), seenAt: now, hits: 0, direction: 0 };
+  const at2 = (price: number, min: number, dayVolume: number) =>
+    evaluate(v, snap(price, now + min * 60_000, { ...base, dayVolume }), now + min * 60_000, c);
+  at2(11.16, 0, 66_800);
+  assert.equal(at2(11.34, 5, 120_000), "wait");
+  assert.equal(at2(11.36, 5.1, 121_000), "alert");
 });
