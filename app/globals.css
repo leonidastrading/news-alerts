@@ -55,6 +55,11 @@ h1 { margin: 0; font-size: clamp(26px, 4vw, 34px); line-height: 1.15; letter-spa
 
 .tile.link { color: inherit; }
 .tile.link:hover { text-decoration: none; border-color: var(--accent); }
+.positions { margin-bottom: 24px; }
+.positions-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.positions-head h2 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
+.positions-total { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.notice.small { padding: 12px 14px; font-size: 14px; margin: 0 0 20px; }
 .breakdown { margin-bottom: 20px; }
 .missed { margin-top: 32px; }
 .missed h2 { margin: 0 0 4px; font-size: 20px; letter-spacing: -0.01em; }

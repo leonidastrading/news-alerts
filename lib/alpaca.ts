@@ -196,6 +196,22 @@ export const placeMarketOrder = (symbol: string, qty: number, side: "buy" | "sel
 
 export const getOrder = (id: string) => call<Order>(PAPER, `/v2/orders/${id}`);
 
+/** An open paper position. Numbers arrive as strings; qty is negative for shorts. */
+export type Position = {
+  symbol: string;
+  side: "long" | "short";
+  qty: string;
+  avg_entry_price: string;
+  current_price: string;
+  market_value: string;
+  cost_basis: string;
+  unrealized_pl: string;
+  unrealized_plpc: string;
+  unrealized_intraday_pl: string;
+  change_today: string;
+};
+export const positions = () => call<Position[]>(PAPER, "/v2/positions");
+
 /** Close the whole position in a symbol; returns the closing order. */
 export const closePosition = (symbol: string) =>
   call<Order>(PAPER, `/v2/positions/${encodeURIComponent(symbol)}`, { method: "DELETE" });

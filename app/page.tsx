@@ -2,6 +2,7 @@ import { readStatus, recentAlerts, recentMisses, type AlertRow, type MissRow } f
 import { MISS_LABELS } from "@/lib/misses";
 import { ORIGINS } from "@/lib/origin";
 import { rideReturn } from "@/lib/detect";
+import { positions as fetchPositions, type Position } from "@/lib/alpaca";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,7 @@ const pct = (x: number | null | undefined, digits = 1) =>
 const usd = (x: number | null | undefined) => (x == null ? "—" : `$${x.toFixed(2)}`);
 const pnlUsd = (x: number | null | undefined) =>
   x == null ? "—" : `${x >= 0 ? "+" : "−"}$${Math.abs(x).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const usd0 = (x: number | null | undefined) => (x == null ? "—" : `$${Math.round(x).toLocaleString("en-US")}`);
 const shares = (x: number | null | undefined) =>
   x == null ? "—" : new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(x);
 const tone = (x: number | null | undefined) => (x == null ? "" : x > 0 ? "pos" : x < 0 ? "neg" : "");
@@ -55,8 +57,21 @@ async function load(): Promise<Loaded> {
   }
 }
 
+type Positions = { list: Position[] } | { note: string };
+
+async function loadPositions(): Promise<Positions> {
+  if (!process.env.ALPACA_KEY_ID || !process.env.ALPACA_SECRET_KEY) {
+    return { note: "Add ALPACA_KEY_ID and ALPACA_SECRET_KEY to this Vercel project to see live positions." };
+  }
+  try {
+    return { list: await fetchPositions() };
+  } catch (e) {
+    return { note: `Couldn't load positions from Alpaca: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 export default async function Page() {
-  const data = await load();
+  const [data, positions] = await Promise.all([load(), loadPositions()]);
   return (
     <>
       <header className="masthead">
@@ -69,7 +84,7 @@ export default async function Page() {
           day.
         </p>
       </header>
-      {"error" in data ? <div className="notice">{data.error}</div> : <Dashboard alerts={data.alerts} misses={data.misses} status={data.status} />}
+      {"error" in data ? <div className="notice">{data.error}</div> : <Dashboard alerts={data.alerts} misses={data.misses} status={data.status} positions={positions} />}
     </>
   );
 }
@@ -94,7 +109,7 @@ function summarize(alerts: AlertRow[]) {
   };
 }
 
-function Dashboard({ alerts, misses, status }: { alerts: AlertRow[]; misses: MissRow[]; status: Status }) {
+function Dashboard({ alerts, misses, status, positions }: { alerts: AlertRow[]; misses: MissRow[]; status: Status; positions: Positions }) {
   const all = summarize(alerts);
   const stale = status && Date.now() - Date.parse(status.updated_at) > 2 * 3_600_000;
   const originGroups: [string, AlertRow[]][] = ORIGINS.map((o): [string, AlertRow[]] => [o, alerts.filter((a) => (a.origin ?? "Other") === o)]).filter(
@@ -155,6 +170,8 @@ function Dashboard({ alerts, misses, status }: { alerts: AlertRow[]; misses: Mis
         </a>
       </section>
 
+      <OpenPositions positions={positions} alerts={alerts} />
+
       {alerts.length > 0 && <Breakdown heading="News · side" groups={groups} />}
       {alerts.length > 0 && <Breakdown heading="News origin" groups={originGroups} />}
 
@@ -195,7 +212,7 @@ function AlertCard({ a }: { a: AlertRow }) {
   ];
 
   return (
-    <article className="card">
+    <article className="card" id={`alert-${a.id}`}>
       <header className="card-head">
         <div className="who">
           <span className="sym">{a.symbol}</span>
@@ -504,5 +521,77 @@ function Breakdown({ heading, groups }: { heading: string; groups: [string, Aler
         </tbody>
       </table>
     </div>
+  );
+}
+
+function OpenPositions({ positions, alerts }: { positions: Positions; alerts: AlertRow[] }) {
+  if ("note" in positions) return <div className="notice small">{positions.note}</div>;
+  const list = positions.list;
+  const num = (x: string) => Number(x);
+  const total = list.reduce((t, p) => t + num(p.unrealized_pl), 0);
+  const cost = list.reduce((t, p) => t + Math.abs(num(p.cost_basis)), 0);
+  // The most recent alert that opened a trade in this symbol.
+  const alertFor = (sym: string) => alerts.find((a) => a.symbol === sym && a.entry_order_id);
+  return (
+    <section className="positions">
+      <div className="positions-head">
+        <h2>Open positions</h2>
+        {list.length > 0 && (
+          <span className={`positions-total ${tone(total)}`}>
+            {pnlUsd(total)} <span className="meta-inline">{pct(cost ? total / cost : null, 2)} on {usd0(cost)}</span>
+          </span>
+        )}
+      </div>
+      {list.length === 0 ? (
+        <div className="notice small">No open paper positions.</div>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Stock</th>
+                <th className="num">P&amp;L</th>
+                <th className="num">P&amp;L %</th>
+                <th className="num">Shares</th>
+                <th className="num">Entry</th>
+                <th className="num">Now</th>
+                <th className="num">Value</th>
+                <th>Opened by</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((p) => {
+                const pl = num(p.unrealized_pl);
+                const a = alertFor(p.symbol);
+                return (
+                  <tr key={p.symbol}>
+                    <td className="nowrap">
+                      <strong>{p.symbol}</strong>
+                      <span className={`dir ${p.side === "long" ? "pos" : "neg"}`}>{p.side === "long" ? "▲ Long" : "▼ Short"}</span>
+                    </td>
+                    <td className={`num ${tone(pl)}`}>{pnlUsd(pl)}</td>
+                    <td className={`num ${tone(pl)}`}>{pct(num(p.unrealized_plpc), 2)}</td>
+                    <td className="num">{Math.abs(num(p.qty))}</td>
+                    <td className="num">{usd(num(p.avg_entry_price))}</td>
+                    <td className="num">{usd(num(p.current_price))}</td>
+                    <td className="num">{usd0(Math.abs(num(p.market_value)))}</td>
+                    <td className="headline">
+                      {a ? (
+                        <a href={`#alert-${a.id}`}>
+                          {clock(a.alerted_at)} · {a.headline}
+                        </a>
+                      ) : (
+                        <span className="meta">Not opened by an alert on this page</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="footnote">Live from the Alpaca paper account each time the page loads. Positions close automatically about 5 minutes before the market closes.</p>
+    </section>
   );
 }
