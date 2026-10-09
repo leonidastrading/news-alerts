@@ -99,12 +99,15 @@ function connectNews(attempt = 0) {
         stats.stream = "live";
         attempt = 0;
         log("news stream live");
+        void saveStatus();
       } else if (m.T === "n") onNews(toNewsItem(m as Parameters<typeof toNewsItem>[0]));
       else if (m.T === "error") noteError("news stream", `${m.code} ${m.msg}`);
     }
   };
   ws.onclose = () => {
+    const wasLive = stats.stream === "live";
     stats.stream = "reconnecting";
+    if (wasLive) void saveStatus();
     const delay = Math.min(60_000, 2_000 * 2 ** attempt);
     log(`news stream closed; reconnecting in ${delay / 1000}s`);
     setTimeout(() => connectNews(attempt + 1), delay);
@@ -282,6 +285,14 @@ async function followUp() {
 
 // ---------- Main ----------
 
+async function saveStatus() {
+  try {
+    await writeStatus({ ...stats, watching: watches.size, openTrades: openTrades.size, market: market?.is_open ?? null });
+  } catch (e) {
+    noteError("status", e);
+  }
+}
+
 function every(seconds: number, name: string, fn: () => Promise<void>) {
   let running = false;
   const run = async () => {
@@ -317,9 +328,7 @@ async function main() {
   });
   every(30, "trades", manageTrades);
   every(300, "follow-up", followUp);
-  every(3600, "status", async () => {
-    await writeStatus({ ...stats, watching: watches.size, openTrades: openTrades.size, market: market?.is_open ?? null });
-  });
+  every(3600, "status", saveStatus);
 }
 
 process.on("unhandledRejection", (e) => noteError("unhandled", e));
