@@ -34,6 +34,7 @@ async function call<T>(base: string, path: string, init: RequestInit = {}): Prom
 type RawNews = {
   id: number;
   headline: string;
+  author?: string;
   summary?: string;
   url?: string;
   source?: string;
@@ -47,6 +48,7 @@ export const toNewsItem = (n: RawNews): NewsItem => ({
   summary: n.summary ?? "",
   url: n.url ?? "",
   source: n.source ?? "",
+  author: n.author ?? "",
   symbols: n.symbols ?? [],
   createdAt: n.created_at,
 });

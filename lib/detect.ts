@@ -16,6 +16,7 @@ export type NewsItem = {
   summary: string;
   url: string;
   source: string;
+  author?: string;
   symbols: string[];
   createdAt: string; // ISO
 };

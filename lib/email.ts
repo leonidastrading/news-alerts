@@ -34,7 +34,7 @@ export function alertHtml(a: AlertEmail, dashboardUrl: string): string {
     `<tr><td style="padding:2px 12px 2px 0;color:#7a7873;white-space:nowrap">${k}</td><td style="padding:2px 0">${v}</td></tr>`;
   const title = a.kind === "preopen" ? `${a.symbol} ${a.direction > 0 ? "▲ broke out" : "▼ broke down"}` : `${a.symbol} ${pct(a.movePct)}`;
   return `<div style="font:15px/1.5 system-ui,sans-serif;max-width:600px">
-  <p style="margin:0 0 4px;font-size:13px;color:#7a7873">${a.kind === "preopen" ? "Pre-open news · opening-range break" : "News alert"} · ${esc(a.category)}</p>
+  <p style="margin:0 0 4px;font-size:13px;color:#7a7873">${a.kind === "preopen" ? "Pre-open news · opening-range break" : "News alert"} · ${esc(a.category)} · ${esc(a.origin)}</p>
   <h2 style="margin:0 0 8px;font-size:22px">${esc(title)}</h2>
   <p style="margin:0 0 12px;color:#52514e">${whatHappened(a)}</p>
   <p style="margin:0 0 4px"><a href="${esc(a.url)}" style="color:#2a78d6;font-weight:600">${esc(a.headline)}</a></p>

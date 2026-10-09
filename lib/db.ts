@@ -31,6 +31,7 @@ export type AlertRow = {
   /** "intraday" (news while open) or "preopen" (news while closed, traded on an opening-range break). */
   kind: string;
   category: string | null;
+  origin: string | null;
   summary: string | null;
   news_count: number | null;
   prev_close: number | null;
@@ -93,6 +94,7 @@ export async function migrate() {
   await sql`ALTER TABLE alerts
     ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'intraday',
     ADD COLUMN IF NOT EXISTS category text,
+    ADD COLUMN IF NOT EXISTS origin text,
     ADD COLUMN IF NOT EXISTS summary text,
     ADD COLUMN IF NOT EXISTS news_count integer,
     ADD COLUMN IF NOT EXISTS prev_close double precision,
@@ -123,6 +125,7 @@ export async function migrate() {
     news_at timestamptz,
     UNIQUE (day, symbol)
   )`;
+  await sql`ALTER TABLE misses ADD COLUMN IF NOT EXISTS origin text`;
   await sql`CREATE TABLE IF NOT EXISTS worker_status (
     id integer PRIMARY KEY,
     updated_at timestamptz NOT NULL,
@@ -138,6 +141,7 @@ export type NewAlert = {
   headline: string;
   summary: string;
   category: string;
+  origin: string;
   url: string;
   source: string;
   newsAt: string;
@@ -160,10 +164,10 @@ export type NewAlert = {
 
 export async function insertAlert(a: NewAlert): Promise<number> {
   const rows = await db()`INSERT INTO alerts
-    (kind, symbol, direction, news_id, headline, summary, category, url, source, news_at, news_count, seen_at, alerted_at,
+    (kind, symbol, direction, news_id, headline, summary, category, origin, url, source, news_at, news_count, seen_at, alerted_at,
      baseline, price, move_pct, prev_close, open_price, gap_pct, range_high, range_low, range_volume,
      volume_since, day_volume, prev_day_volume)
-    VALUES (${a.kind}, ${a.symbol}, ${a.direction}, ${a.newsId}, ${a.headline}, ${a.summary}, ${a.category}, ${a.url},
+    VALUES (${a.kind}, ${a.symbol}, ${a.direction}, ${a.newsId}, ${a.headline}, ${a.summary}, ${a.category}, ${a.origin}, ${a.url},
             ${a.source}, ${a.newsAt}, ${a.newsCount}, ${a.seenAt.toISOString()}, ${a.alertedAt.toISOString()},
             ${a.baseline}, ${a.price}, ${a.movePct}, ${a.prevClose}, ${a.openPrice}, ${a.gapPct}, ${a.rangeHigh},
             ${a.rangeLow}, ${a.rangeVolume}, ${a.volumeSince}, ${a.dayVolume}, ${a.prevDayVolume})
@@ -231,6 +235,7 @@ export type MissRow = {
   headline: string | null;
   url: string | null;
   news_at: string | null;
+  origin: string | null;
 };
 
 /** Record a missed move, or update it with a bigger move later in the day (the reason stays as first found). */
@@ -246,10 +251,11 @@ export async function upsertMiss(m: {
   headline: string | null;
   url: string | null;
   newsAt: string | null;
+  origin: string | null;
 }) {
-  await db()`INSERT INTO misses (day, symbol, detected_at, day_change_pct, price, prev_close, day_volume, reason_code, reason_text, headline, url, news_at)
+  await db()`INSERT INTO misses (day, symbol, detected_at, day_change_pct, price, prev_close, day_volume, reason_code, reason_text, headline, url, news_at, origin)
     VALUES (${m.day}, ${m.symbol}, now(), ${m.dayChangePct}, ${m.price}, ${m.prevClose}, ${m.dayVolume}, ${m.reasonCode}, ${m.reasonText},
-            ${m.headline}, ${m.url}, ${m.newsAt})
+            ${m.headline}, ${m.url}, ${m.newsAt}, ${m.origin})
     ON CONFLICT (day, symbol) DO UPDATE SET
       day_change_pct = CASE WHEN abs(EXCLUDED.day_change_pct) > abs(misses.day_change_pct) THEN EXCLUDED.day_change_pct ELSE misses.day_change_pct END,
       price = CASE WHEN abs(EXCLUDED.day_change_pct) > abs(misses.day_change_pct) THEN EXCLUDED.price ELSE misses.price END,
@@ -258,7 +264,7 @@ export async function upsertMiss(m: {
 
 export async function recentMisses(days = 30): Promise<MissRow[]> {
   return rowsOut<MissRow>(await db()`SELECT id, to_char(day, 'YYYY-MM-DD') AS day, symbol, detected_at, day_change_pct, price, prev_close,
-      day_volume, reason_code, reason_text, headline, url, news_at
+      day_volume, reason_code, reason_text, headline, url, news_at, origin
     FROM misses WHERE day > (now() AT TIME ZONE 'America/New_York')::date - ${days}
     ORDER BY day DESC, abs(day_change_pct) DESC LIMIT 1000`);
 }

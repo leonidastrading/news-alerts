@@ -74,6 +74,9 @@ h1 { margin: 0; font-size: clamp(26px, 4vw, 34px); line-height: 1.15; letter-spa
 .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); font-size: 12px; font-weight: 600; color: var(--ink-2); }
 .badge.pos { color: var(--pos); }
 .badge.neg { color: var(--neg); }
+.badge.origin { background: transparent; border: 1px solid var(--border); font-weight: 500; }
+.badge.origin.late { color: var(--warn); border-color: currentColor; }
+.headline .badge { margin: 4px 0 2px; }
 .when { font-size: 13px; color: var(--muted); }
 .pnl { margin-left: auto; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .meta-inline { font-size: 12px; font-weight: 400; color: var(--muted); }

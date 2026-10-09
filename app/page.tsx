@@ -1,5 +1,6 @@
 import { readStatus, recentAlerts, recentMisses, type AlertRow, type MissRow } from "@/lib/db";
 import { MISS_LABELS } from "@/lib/misses";
+import { ORIGINS } from "@/lib/origin";
 import { rideReturn } from "@/lib/detect";
 
 export const dynamic = "force-dynamic";
@@ -92,6 +93,9 @@ function summarize(alerts: AlertRow[]) {
 function Dashboard({ alerts, misses, status }: { alerts: AlertRow[]; misses: MissRow[]; status: Status }) {
   const all = summarize(alerts);
   const stale = status && Date.now() - Date.parse(status.updated_at) > 2 * 3_600_000;
+  const originGroups: [string, AlertRow[]][] = ORIGINS.map((o): [string, AlertRow[]] => [o, alerts.filter((a) => (a.origin ?? "Other") === o)]).filter(
+    ([, rows]) => rows.length > 0,
+  );
   const groups: [string, AlertRow[]][] = [
     ["Intraday · long", alerts.filter((a) => a.kind !== "preopen" && a.direction > 0)],
     ["Intraday · short", alerts.filter((a) => a.kind !== "preopen" && a.direction < 0)],
@@ -143,41 +147,8 @@ function Dashboard({ alerts, misses, status }: { alerts: AlertRow[]; misses: Mis
         </a>
       </section>
 
-      {alerts.length > 0 && (
-        <div className="table-wrap breakdown">
-          <table>
-            <thead>
-              <tr>
-                <th>News · side</th>
-                <th className="num">Alerts</th>
-                <th className="num">Closed trades</th>
-                <th className="num">Winners</th>
-                <th className="num">Paper P&amp;L</th>
-                <th className="num">Kept going 60 min</th>
-                <th className="num">Avg 60 min</th>
-                <th className="num">Avg next close</th>
-              </tr>
-            </thead>
-            <tbody>
-              {groups.map(([label, rows]) => {
-                const g = summarize(rows);
-                return (
-                  <tr key={label}>
-                    <td>{label}</td>
-                    <td className="num">{g.count}</td>
-                    <td className="num">{g.closed}</td>
-                    <td className="num">{g.wins}</td>
-                    <td className={`num ${tone(g.pnl)}`}>{pnlUsd(g.pnl)}</td>
-                    <td className="num">{g.kept60}</td>
-                    <td className={`num ${tone(g.avg60)}`}>{pct(g.avg60, 2)}</td>
-                    <td className={`num ${tone(g.avg1d)}`}>{pct(g.avg1d, 2)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {alerts.length > 0 && <Breakdown heading="News · side" groups={groups} />}
+      {alerts.length > 0 && <Breakdown heading="News origin" groups={originGroups} />}
 
       {alerts.length === 0 ? (
         <div className="notice">No alerts yet. They appear here as soon as a stock in the news moves.</div>
@@ -223,6 +194,7 @@ function AlertCard({ a }: { a: AlertRow }) {
           <span className={`badge ${long ? "pos" : "neg"}`}>{long ? "▲ Long" : "▼ Short"}</span>
           <span className="badge">{pre ? "Pre-open news" : "Intraday news"}</span>
           {a.category && <span className="badge">{a.category}</span>}
+          {a.origin && <span className={`badge origin ${a.origin.startsWith("Reactive") ? "late" : ""}`}>{a.origin}</span>}
         </div>
         <div className="when">
           {day(a.alerted_at)} · {clock(a.alerted_at)} ET
@@ -467,6 +439,7 @@ function Missed({ misses }: { misses: MissRow[] }) {
                           <a href={m.url ?? "#"} target="_blank" rel="noreferrer">
                             {m.headline}
                           </a>
+                          {m.origin && <span className={`badge origin ${m.origin.startsWith("Reactive") ? "late" : ""}`}>{m.origin}</span>}
                           {m.news_at && (
                             <span className="meta">
                               {day(m.news_at)} {clock(m.news_at)} ET
@@ -485,5 +458,43 @@ function Missed({ misses }: { misses: MissRow[] }) {
         </>
       )}
     </section>
+  );
+}
+
+function Breakdown({ heading, groups }: { heading: string; groups: [string, AlertRow[]][] }) {
+  return (
+    <div className="table-wrap breakdown">
+      <table>
+        <thead>
+          <tr>
+            <th>{heading}</th>
+            <th className="num">Alerts</th>
+            <th className="num">Closed trades</th>
+            <th className="num">Winners</th>
+            <th className="num">Paper P&amp;L</th>
+            <th className="num">Kept going 60 min</th>
+            <th className="num">Avg 60 min</th>
+            <th className="num">Avg next close</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map(([label, rows]) => {
+            const g = summarize(rows);
+            return (
+              <tr key={label}>
+                <td>{label}</td>
+                <td className="num">{g.count}</td>
+                <td className="num">{g.closed}</td>
+                <td className="num">{g.wins}</td>
+                <td className={`num ${tone(g.pnl)}`}>{pnlUsd(g.pnl)}</td>
+                <td className="num">{g.kept60}</td>
+                <td className={`num ${tone(g.avg60)}`}>{pct(g.avg60, 2)}</td>
+                <td className={`num ${tone(g.avg1d)}`}>{pct(g.avg1d, 2)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }

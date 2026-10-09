@@ -1,6 +1,6 @@
 // Why a big mover didn't get an alert, from the day's log of headlines and watches for that stock.
 
-export type HeadlineSeen = { at: number; headline: string; url: string; roundup: boolean };
+export type HeadlineSeen = { at: number; headline: string; url: string; roundup: boolean; origin: string };
 
 export type WatchOutcome = {
   kind: "intraday" | "preopen";

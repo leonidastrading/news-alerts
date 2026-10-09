@@ -37,6 +37,7 @@ import {
   type Watch,
 } from "../lib/detect.ts";
 import { categorize } from "../lib/category.ts";
+import { classifyOrigin } from "../lib/origin.ts";
 import { nyDate, nyToUtc } from "../lib/time.ts";
 import { missReason, type DayLog, type WatchOutcome } from "../lib/misses.ts";
 import {
@@ -76,7 +77,8 @@ const logFor = (symbol: string) => {
 function logHeadline(n: NewsItem) {
   const tickers = usTickers(n);
   const roundup = tickers.length > cfg.maxSymbolsPerHeadline;
-  for (const t of tickers) logFor(t).headlines.push({ at: Date.parse(n.createdAt), headline: n.headline, url: n.url, roundup });
+  const origin = classifyOrigin(n);
+  for (const t of tickers) logFor(t).headlines.push({ at: Date.parse(n.createdAt), headline: n.headline, url: n.url, roundup, origin });
 }
 function logWatch(symbol: string, w: Omit<WatchOutcome, "endedAt"> & { endedAt?: number }) {
   logFor(symbol).watches.push({ ...w, endedAt: w.endedAt ?? Date.now() });
@@ -332,6 +334,7 @@ async function fireIntraday(w: Watch, s: Snapshot, now: number) {
     headline: w.news.headline,
     summary: w.news.summary,
     category: categorize(w.news.headline, w.news.summary),
+    origin: classifyOrigin(w.news),
     url: w.news.url,
     source: w.news.source,
     newsAt: w.news.createdAt,
@@ -363,6 +366,7 @@ async function fireBreakout(g: GapWatch, s: Snapshot, now: number) {
     headline: g.news.headline,
     summary: g.news.summary,
     category: categorize(g.news.headline, g.news.summary),
+    origin: classifyOrigin(g.news),
     url: g.news.url,
     source: g.news.source,
     newsAt: g.news.createdAt,
@@ -448,6 +452,7 @@ async function scanMisses() {
       headline: h?.headline ?? null,
       url: h?.url ?? null,
       newsAt: h ? new Date(h.at).toISOString() : null,
+      origin: h?.origin ?? null,
     });
     missRecorded.set(m.symbol, Math.abs(change));
     stats.misses++;

@@ -4,7 +4,7 @@ import { missReason, type DayLog } from "./misses.ts";
 
 const t0 = Date.parse("2026-10-09T14:00:00Z"); // 10:00 ET
 const started = Date.parse("2026-10-09T12:00:00Z");
-const h = (minutes: number, roundup = false) => ({ at: t0 + minutes * 60_000, headline: "Headline", url: "https://x", roundup });
+const h = (minutes: number, roundup = false) => ({ at: t0 + minutes * 60_000, headline: "Headline", url: "https://x", roundup, origin: "Other" });
 const w = (o: Partial<DayLog["watches"][number]>) => ({
   kind: "intraday" as const,
   startedAt: t0,

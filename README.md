@@ -22,6 +22,10 @@ Two parts share one Neon Postgres database:
     during regular hours, held to the end of the day and closed about 5 minutes before the close) and emails you.
   - Afterwards fills in the trade's fill prices and P&L and the stock's price 15 and 60 minutes after the alert
     and at the next day's close.
+- **News origin**: each headline is labelled from its wording and author as a press release, SEC filing,
+  earnings numbers, analyst action, a report citing another outlet, a reactive article written after the move
+  ("Why is XYZ stock trading lower?"), or other. Alerts and missed moves carry the label, and the dashboard breaks
+  results down by it.
 - **Missed moves**: every 5 minutes during the session the monitor checks Alpaca's top gainers and losers. A
   stock up or down 5% or more on the day, liquid enough to have been watched, with no alert, is recorded with
   why it was missed: no headline tagged with it, only in roundups, filtered out, already alerted, moved before

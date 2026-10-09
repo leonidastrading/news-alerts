@@ -103,6 +103,7 @@ test("email subjects", () => {
     headline: "SpaceX buys spectrum",
     summary: "",
     category: "M&A",
+    origin: "Other",
     url: "",
     source: "",
     newsAt: "2026-10-08T22:30:00Z",
