@@ -1,0 +1,11 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "RAILPACK",
+    "buildCommand": "echo 'worker runs from source; no build step'"
+  },
+  "deploy": {
+    "startCommand": "npm run worker",
+    "restartPolicyType": "ALWAYS"
+  }
+}
