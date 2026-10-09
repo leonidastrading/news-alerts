@@ -60,12 +60,15 @@ export async function newsSince(start: Date): Promise<NewsItem[]> {
   return (r.news ?? []).map(toNewsItem);
 }
 
-/** All news published between `start` and `end` (up to `maxPages` × 50 items), oldest first. */
-export async function newsBetween(start: Date, end: Date, maxPages = 30, symbols?: string[]): Promise<NewsItem[]> {
+/**
+ * News published between `start` and `end`, oldest first. Fetched newest first, so if there's more
+ * than `maxPages` × 50 items (a long weekend) it's the oldest that get left out, not the latest.
+ */
+export async function newsBetween(start: Date, end: Date, maxPages = 40, symbols?: string[]): Promise<NewsItem[]> {
   const out: NewsItem[] = [];
   let token: string | undefined;
   for (let page = 0; page < maxPages; page++) {
-    const q = new URLSearchParams({ start: start.toISOString(), end: end.toISOString(), sort: "asc", limit: "50", include_content: "false" });
+    const q = new URLSearchParams({ start: start.toISOString(), end: end.toISOString(), sort: "desc", limit: "50", include_content: "false" });
     if (token) q.set("page_token", token);
     if (symbols?.length) q.set("symbols", symbols.join(","));
     const r = await call<{ news: RawNews[]; next_page_token?: string | null }>(DATA, `/v1beta1/news?${q}`);
@@ -73,7 +76,7 @@ export async function newsBetween(start: Date, end: Date, maxPages = 30, symbols
     token = r.next_page_token ?? undefined;
     if (!token) break;
   }
-  return out;
+  return out.reverse();
 }
 
 // ---------- Prices ----------
