@@ -14,12 +14,18 @@ Two parts share one Neon Postgres database:
     with many tickers, stocks under $3 and thinly traded stocks are skipped.
   - Checks prices every 5 seconds (IEX feed). The price at the first check after the headline is the starting
     point; when a stock is 1.5% or more away from it on two checks in a row, that's an alert.
+  - News from while the market is closed (after the close, overnight, pre-market) is collected at the open:
+    every stock with headlines since the previous close gets an opening range (its high and low over the first
+    5 minutes). A break above the high or below the low, held for two checks, before 10:30 is an alert. The
+    overnight gap and the range are recorded with it.
   - On an alert: saves it, places a paper trade in the direction of the move (about $2,000, market order, only
     during regular hours, held to the end of the day and closed about 5 minutes before the close) and emails you.
   - Afterwards fills in the trade's fill prices and P&L and the stock's price 15 and 60 minutes after the alert
     and at the next day's close.
-- **Website** (Next.js on Vercel): every alert from the last 30 days, how riding each move would have done at
-  +15 min, +60 min and the next close, the paper P&L, and whether the monitor is checking in.
+- **Website** (Next.js on Vercel): every alert from the last 30 days as a card with the headline, its category,
+  source and summary; a timeline (published, received, alert, entry sent and filled, exit sent and filled);
+  price and gap; IEX volume; the paper trade's fills, slippage and P&L; and how riding the move would have done at
+  +15 min, +60 min and the next close. A breakdown splits results by intraday vs pre-open news and long vs short.
 
 Trades only ever go to `paper-api.alpaca.markets`; the code has no way to reach a live account.
 

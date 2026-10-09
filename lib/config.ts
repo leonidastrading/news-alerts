@@ -26,6 +26,12 @@ export type Config = {
   paperTrading: boolean;
   /** Dollars per paper trade. */
   tradeNotional: number;
+  /** News from while the market was closed: minutes after the open that make up the opening range. */
+  openRangeMinutes: number;
+  /** ...and how long after the open to watch for a break of that range. */
+  openWatchMinutes: number;
+  /** A break must clear the range high/low by this fraction (0.001 = 0.1%). */
+  breakoutBuffer: number;
   /** Close each paper trade after this many minutes; 0 holds it to the end of the day. Always closed before the close. */
   holdMinutes: number;
 };
@@ -42,6 +48,9 @@ export function loadConfig(): Config {
     cooldownMinutes: num("COOLDOWN_MINUTES", 120),
     paperTrading: (process.env.PAPER_TRADING ?? "on").toLowerCase() !== "off",
     tradeNotional: num("TRADE_NOTIONAL", 2000),
+    openRangeMinutes: num("OPEN_RANGE_MINUTES", 5),
+    openWatchMinutes: num("OPEN_WATCH_MINUTES", 60),
+    breakoutBuffer: num("BREAKOUT_BUFFER_PCT", 0.1) / 100,
     holdMinutes: num("HOLD_MINUTES", 0),
   };
 }

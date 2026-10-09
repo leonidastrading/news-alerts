@@ -1,6 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { evaluate, rejectReason, rideReturn, shouldExit, symbolsToWatch, type NewsItem, type Watch } from "./detect.ts";
+import {
+  evaluate,
+  evaluateBreakout,
+  openingRange,
+  preOpenNews,
+  rejectReason,
+  rideReturn,
+  shouldExit,
+  symbolsToWatch,
+  type GapWatch,
+  type NewsItem,
+  type Snapshot,
+  type Watch,
+} from "./detect.ts";
+import { categorize } from "./category.ts";
+import { nyToUtc } from "./time.ts";
 import { nextDayClose, priceAfter, resultsDone } from "./results.ts";
 import { alertSubject } from "./email.ts";
 
@@ -14,7 +29,16 @@ const news = (symbols: string[], minutesAgo = 1): NewsItem => ({
   symbols,
   createdAt: new Date(now - minutesAgo * 60_000).toISOString(),
 });
-const cfg = { movePct: 0.015, confirmTicks: 2, watchMinutes: 30, maxSymbolsPerHeadline: 4, minPrice: 3, minIexDollarVolume: 500_000 };
+const cfg = { movePct: 0.015, confirmTicks: 2, watchMinutes: 30, maxSymbolsPerHeadline: 4, minPrice: 3, minIexDollarVolume: 500_000, breakoutBuffer: 0.001 };
+const snap = (price: number, at: number, extra: Partial<Snapshot> = {}): Snapshot => ({
+  price,
+  tradeAt: at,
+  prevDollarVolume: 1e7,
+  prevClose: null,
+  dayVolume: null,
+  prevVolume: null,
+  ...extra,
+});
 
 test("which headlines get watched", () => {
   assert.deepEqual(symbolsToWatch(news(["VZ", "t", "VZ"]), now, cfg), ["VZ", "T"]);
@@ -25,14 +49,14 @@ test("which headlines get watched", () => {
 });
 
 test("thin and cheap stocks are rejected", () => {
-  assert.equal(rejectReason({ price: 2.5, tradeAt: now, prevDollarVolume: 9e6 }, cfg), "price under $3");
-  assert.equal(rejectReason({ price: 40, tradeAt: now, prevDollarVolume: 1e5 }, cfg), "too thinly traded");
-  assert.equal(rejectReason({ price: 40, tradeAt: now, prevDollarVolume: 9e6 }, cfg), null);
+  assert.equal(rejectReason(snap(2.5, now), cfg), "price under $3");
+  assert.equal(rejectReason(snap(40, now, { prevDollarVolume: 1e5 }), cfg), "too thinly traded");
+  assert.equal(rejectReason(snap(40, now), cfg), null);
 });
 
 test("an alert needs the move to hold for two checks in the same direction", () => {
   const w: Watch = { symbol: "VZ", news: news(["VZ"]), seenAt: now, hits: 0, direction: 0 };
-  const at = (price: number, sec: number) => evaluate(w, { price, tradeAt: now + sec * 1000, prevDollarVolume: 1e7 }, now + sec * 1000, cfg);
+  const at = (price: number, sec: number) => evaluate(w, snap(price, now + sec * 1000), now + sec * 1000, cfg);
   assert.equal(at(46, 0), "wait"); // sets the baseline
   assert.equal(w.baseline, 46);
   assert.equal(at(45.2, 5), "wait"); // −1.7%, first hit
@@ -45,9 +69,9 @@ test("an alert needs the move to hold for two checks in the same direction", () 
 
 test("stale trades are ignored and watches expire", () => {
   const w: Watch = { symbol: "VZ", news: news(["VZ"]), seenAt: now, hits: 0, direction: 0 };
-  assert.equal(evaluate(w, { price: 46, tradeAt: now - 10 * 60_000, prevDollarVolume: 1e7 }, now, cfg), "wait");
+  assert.equal(evaluate(w, snap(46, now - 10 * 60_000), now, cfg), "wait");
   assert.equal(w.baseline, undefined, "no baseline from a stale trade");
-  assert.equal(evaluate(w, { price: 46, tradeAt: now, prevDollarVolume: 1e7 }, now + 31 * 60_000, cfg), "expire");
+  assert.equal(evaluate(w, snap(46, now), now + 31 * 60_000, cfg), "expire");
 });
 
 test("ride return follows the alert's direction", () => {
@@ -70,9 +94,41 @@ test("results from bars", () => {
   assert.equal(resultsDone({ price60m: 1, close1d: null }, at, at + 6 * 86_400_000), true);
 });
 
-test("email subject", () => {
-  const s = alertSubject({ symbol: "VZ", movePct: -0.021, minutesAfterNews: 6.2, baseline: 46, price: 45, headline: "SpaceX buys spectrum", summary: "", url: "", source: "", trade: "" });
-  assert.equal(s, "VZ −2.1% · 6 min after: SpaceX buys spectrum");
+test("email subjects", () => {
+  const base = {
+    kind: "intraday" as const,
+    symbol: "VZ",
+    direction: -1,
+    newsId: 1,
+    headline: "SpaceX buys spectrum",
+    summary: "",
+    category: "M&A",
+    url: "",
+    source: "",
+    newsAt: "2026-10-08T22:30:00Z",
+    newsCount: 1,
+    seenAt: new Date(),
+    alertedAt: new Date(),
+    baseline: 46,
+    price: 45,
+    movePct: -0.021,
+    prevClose: 46.35,
+    openPrice: null,
+    gapPct: null,
+    rangeHigh: null,
+    rangeLow: null,
+    rangeVolume: null,
+    volumeSince: null,
+    dayVolume: null,
+    prevDayVolume: null,
+    minutesAfterNews: 6.2,
+    trade: "",
+  };
+  assert.equal(alertSubject(base), "VZ −2.1% · 6 min after: SpaceX buys spectrum");
+  assert.equal(
+    alertSubject({ ...base, kind: "preopen", gapPct: -0.06 }),
+    "VZ broke below its opening range after a −6.0% gap: SpaceX buys spectrum",
+  );
 });
 
 test("paper trades are held to the close by default", () => {
@@ -84,4 +140,52 @@ test("paper trades are held to the close by default", () => {
   // Missed the close (monitor was down): close at the next open.
   const nextClose = Date.parse("2026-10-09T20:00:00Z");
   assert.equal(shouldExit(opened, Date.parse("2026-10-09T13:31:00Z"), nextClose, 0), true);
+});
+
+test("news from while the market was closed, grouped by ticker", () => {
+  const items = [
+    { ...news(["VZ", "T"]), id: 1, createdAt: "2026-10-08T22:30:00Z" },
+    { ...news(["VZ"]), id: 2, createdAt: "2026-10-09T11:00:00Z", headline: "Verizon responds" },
+    { ...news(["A", "B", "C", "D", "E"]), id: 3 },
+  ];
+  const m = preOpenNews(items, cfg);
+  assert.deepEqual([...m.keys()].sort(), ["T", "VZ"]);
+  assert.equal(m.get("VZ")!.count, 2);
+  assert.equal(m.get("VZ")!.news.headline, "Verizon responds", "keeps the latest headline");
+});
+
+test("opening range and breakouts", () => {
+  const r = openingRange([
+    { o: 43.6, h: 44.1, l: 43.2, v: 1000 },
+    { o: 43.9, h: 44.3, l: 43.5, v: 800 },
+  ])!;
+  assert.deepEqual(r, { open: 43.6, high: 44.3, low: 43.2, volume: 1800 });
+  assert.equal(openingRange([]), null);
+
+  const g: GapWatch = { symbol: "VZ", news: news(["VZ"]), newsCount: 1, seenAt: now, hits: 0, direction: 0, rangeHigh: 44.3, rangeLow: 43.2 };
+  const end = now + 55 * 60_000;
+  const at = (price: number, sec: number) => evaluateBreakout(g, snap(price, now + sec * 1000), now + sec * 1000, end, cfg);
+  assert.equal(at(44.32, 0), "wait", "inside the 0.1% buffer");
+  assert.equal(at(43.1, 5), "wait"); // below the range: first hit down
+  assert.equal(at(43.0, 10), "alert");
+  assert.equal(g.direction, -1);
+  assert.equal(evaluateBreakout(g, snap(45, end + 1000), end + 1000, end, cfg), "expire");
+  const unset: GapWatch = { ...g, rangeHigh: undefined, rangeLow: undefined, hits: 0, direction: 0 };
+  assert.equal(evaluateBreakout(unset, snap(99, now), now, end, cfg), "wait", "no range yet");
+});
+
+test("news categories", () => {
+  assert.equal(categorize("Verizon Q3 EPS $1.19 Beats $1.17 Estimate"), "Earnings");
+  assert.equal(categorize("SpaceX to acquire 800 MHz spectrum from Grain Management"), "M&A");
+  assert.equal(categorize("Morgan Stanley downgrades AT&T to Equal-Weight, lowers price target"), "Analyst rating");
+  assert.equal(categorize("FDA approves Acme's drug for migraine"), "FDA / clinical");
+  assert.equal(categorize("Acme announces $50M registered direct offering"), "Offering / financing");
+  assert.equal(categorize("Shares are trading higher", "The company said its CEO will step down"), "Management");
+  assert.equal(categorize("Stocks to watch this morning"), "Other");
+});
+
+test("New York wall-clock times to UTC", () => {
+  assert.equal(new Date(nyToUtc("2026-10-09", "09:30")).toISOString(), "2026-10-09T13:30:00.000Z"); // EDT
+  assert.equal(new Date(nyToUtc("2026-12-09", "09:30")).toISOString(), "2026-12-09T14:30:00.000Z"); // EST
+  assert.equal(new Date(nyToUtc("2026-11-27", "13:00")).toISOString(), "2026-11-27T18:00:00.000Z"); // half day
 });

@@ -58,6 +58,21 @@ export async function newsSince(start: Date): Promise<NewsItem[]> {
   return (r.news ?? []).map(toNewsItem);
 }
 
+/** All news published between `start` and `end` (up to `maxPages` × 50 items), oldest first. */
+export async function newsBetween(start: Date, end: Date, maxPages = 30): Promise<NewsItem[]> {
+  const out: NewsItem[] = [];
+  let token: string | undefined;
+  for (let page = 0; page < maxPages; page++) {
+    const q = new URLSearchParams({ start: start.toISOString(), end: end.toISOString(), sort: "asc", limit: "50", include_content: "false" });
+    if (token) q.set("page_token", token);
+    const r = await call<{ news: RawNews[]; next_page_token?: string | null }>(DATA, `/v1beta1/news?${q}`);
+    out.push(...(r.news ?? []).map(toNewsItem));
+    token = r.next_page_token ?? undefined;
+    if (!token) break;
+  }
+  return out;
+}
+
 // ---------- Prices ----------
 
 type RawBar = { t: string; o: number; h: number; l: number; c: number; v: number };
@@ -79,27 +94,45 @@ export async function snapshots(symbols: string[]): Promise<Record<string, Snaps
         price: s.latestTrade.p,
         tradeAt: Date.parse(s.latestTrade.t),
         prevDollarVolume: prev ? prev.c * prev.v : 0,
+        prevClose: prev?.c ?? null,
+        dayVolume: s.dailyBar?.v ?? null,
+        prevVolume: prev?.v ?? null,
       };
     }
   }
   return out;
 }
 
-export type Bar = { t: number; c: number };
+export type Bar = { t: number; o: number; h: number; l: number; c: number; v: number };
 
-/** 1-minute or daily bars for one symbol, oldest first. */
+/** 1-minute or daily bars for several symbols, oldest first. */
+export async function barsMulti(symbols: string[], timeframe: "1Min" | "1Day", start: Date, end: Date): Promise<Record<string, Bar[]>> {
+  const out: Record<string, Bar[]> = {};
+  for (let i = 0; i < symbols.length; i += 200) {
+    let token: string | undefined;
+    do {
+      const q = new URLSearchParams({
+        symbols: symbols.slice(i, i + 200).join(","),
+        timeframe,
+        start: start.toISOString(),
+        end: end.toISOString(),
+        feed: "iex",
+        limit: "10000",
+        adjustment: "raw",
+      });
+      if (token) q.set("page_token", token);
+      const r = await call<{ bars: Record<string, RawBar[]>; next_page_token?: string | null }>(DATA, `/v2/stocks/bars?${q}`);
+      for (const [sym, list] of Object.entries(r.bars ?? {})) {
+        (out[sym] ??= []).push(...list.map((b) => ({ t: Date.parse(b.t), o: b.o, h: b.h, l: b.l, c: b.c, v: b.v })));
+      }
+      token = r.next_page_token ?? undefined;
+    } while (token);
+  }
+  return out;
+}
+
 export async function bars(symbol: string, timeframe: "1Min" | "1Day", start: Date, end: Date): Promise<Bar[]> {
-  const q = new URLSearchParams({
-    symbols: symbol,
-    timeframe,
-    start: start.toISOString(),
-    end: end.toISOString(),
-    feed: "iex",
-    limit: "1000",
-    adjustment: "raw",
-  });
-  const r = await call<{ bars: Record<string, RawBar[]> }>(DATA, `/v2/stocks/bars?${q}`);
-  return (r.bars?.[symbol] ?? []).map((b) => ({ t: Date.parse(b.t), c: b.c }));
+  return (await barsMulti([symbol], timeframe, start, end))[symbol] ?? [];
 }
 
 // ---------- Paper trading ----------
@@ -107,10 +140,21 @@ export async function bars(symbol: string, timeframe: "1Min" | "1Day", start: Da
 export type Clock = { is_open: boolean; next_open: string; next_close: string; timestamp: string };
 export const clock = () => call<Clock>(PAPER, "/v2/clock");
 
+/** Trading days between two New York dates (YYYY-MM-DD), with open and close as "HH:MM" New York time. */
+export type CalendarDay = { date: string; open: string; close: string };
+export const calendar = (start: string, end: string) => call<CalendarDay[]>(PAPER, `/v2/calendar?start=${start}&end=${end}`);
+
 export type Asset = { tradable: boolean; shortable: boolean; easy_to_borrow: boolean };
 export const asset = (symbol: string) => call<Asset>(PAPER, `/v2/assets/${encodeURIComponent(symbol)}`);
 
-export type Order = { id: string; status: string; filled_avg_price: string | null; filled_qty: string; filled_at: string | null };
+export type Order = {
+  id: string;
+  status: string;
+  submitted_at: string | null;
+  filled_avg_price: string | null;
+  filled_qty: string;
+  filled_at: string | null;
+};
 
 export const placeMarketOrder = (symbol: string, qty: number, side: "buy" | "sell") =>
   call<Order>(PAPER, "/v2/orders", {
