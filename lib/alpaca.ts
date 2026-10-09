@@ -148,6 +148,12 @@ export async function movers(top = 50): Promise<Mover[]> {
   return [...(r.gainers ?? []), ...(r.losers ?? [])];
 }
 
+/** The most actively traded stocks today by share volume. */
+export async function mostActives(top = 100): Promise<string[]> {
+  const r = await call<{ most_actives?: { symbol: string }[] }>(DATA, `/v1beta1/screener/stocks/most-actives?by=volume&top=${top}`);
+  return (r.most_actives ?? []).map((m) => m.symbol);
+}
+
 // ---------- Paper trading ----------
 
 export type Clock = { is_open: boolean; next_open: string; next_close: string; timestamp: string };

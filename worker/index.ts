@@ -13,6 +13,7 @@ import {
   credentials,
   getOrder,
   hasPosition,
+  mostActives,
   movers,
   newsBetween,
   newsSince,
@@ -427,49 +428,67 @@ async function fire(a: NewAlert) {
 
 const US_TICKER = /^[A-Z]{1,5}(\.[A-Z])?$/;
 const missRecorded = new Map<string, number>(); // symbol -> largest |day change| recorded today
-let moversAvailable = true;
+
+// Which stocks to check: every stock with a headline today, the most active by volume and the
+// top % movers. The movers list alone is mostly small caps up or down 20%+, so a liquid stock down
+// 6% on news (Verizon on the SpaceX deal) never appears in it.
+async function missUniverse(): Promise<string[]> {
+  const out = new Set<string>(dayLog.keys());
+  const sources: [string, () => Promise<string[]>][] = [
+    ["most actives", () => mostActives(100)],
+    ["movers", async () => (await movers(50)).map((m) => m.symbol)],
+  ];
+  for (const [name, get] of sources) {
+    try {
+      for (const sym of await get()) out.add(sym);
+    } catch (e) {
+      if (!screenerWarned.has(name)) {
+        screenerWarned.add(name);
+        noteError(`${name} list (missed-move check continues without it)`, e);
+      }
+    }
+  }
+  return [...out].filter((s) => US_TICKER.test(s));
+}
+const screenerWarned = new Set<string>();
 
 async function scanMisses() {
-  if (!market?.is_open || !moversAvailable) return;
+  if (!market?.is_open) return;
   const now = Date.now();
   const today = nyDate(now);
   if (sessionDate !== today || !prevCloseAt) return;
-  let list;
-  try {
-    list = await movers(50);
-  } catch (e) {
-    if (/HTTP (401|403|404)/.test(String(e))) {
-      moversAvailable = false;
-      noteError("movers (missed-move check turned off: not available on this Alpaca plan)", e);
-      return;
-    }
-    throw e;
+  const universe = await missUniverse();
+  const snaps = await snapshots(universe);
+  const big: { symbol: string; change: number; snap: Snapshot }[] = [];
+  for (const symbol of universe) {
+    const snap = snaps[symbol];
+    if (!snap?.prevClose || snap.price < cfg.minPrice || snap.prevDollarVolume < cfg.minIexDollarVolume) continue;
+    if (now - snap.tradeAt > 15 * 60_000) continue; // no recent trade: price not current
+    const change = snap.price / snap.prevClose - 1;
+    if (Math.abs(change) >= cfg.missMovePct) big.push({ symbol, change, snap });
   }
   stats.missScans++;
-  const big = list.filter((m) => US_TICKER.test(m.symbol) && Math.abs(m.percent_change) / 100 >= cfg.missMovePct && m.price >= cfg.minPrice);
+  lastMissScan = { at: new Date(now).toISOString(), checked: universe.length, bigMovers: big.length, recorded: 0 };
   if (big.length === 0) return;
-  const [alerted, snaps] = await Promise.all([alertedOn(today), snapshots(big.map((m) => m.symbol))]);
-  for (const m of big) {
-    const change = m.percent_change / 100;
-    const snap = snaps[m.symbol];
-    if (alerted.has(m.symbol) || watches.has(m.symbol) || session?.watches.has(m.symbol)) continue;
-    if (!snap || snap.prevDollarVolume < cfg.minIexDollarVolume) continue; // too thin to have traded anyway
-    const prevAbs = missRecorded.get(m.symbol);
+  const alerted = await alertedOn(today);
+  for (const { symbol, change, snap } of big) {
+    if (alerted.has(symbol) || watches.has(symbol) || session?.watches.has(symbol)) continue;
+    const prevAbs = missRecorded.get(symbol);
     if (prevAbs !== undefined && Math.abs(change) < prevAbs + 0.01) continue;
-    let log = dayLog.get(m.symbol);
+    let log = dayLog.get(symbol);
     if (!log) {
       // Nothing in memory (e.g. the monitor restarted): ask the news API directly.
-      const items = await newsBetween(new Date(prevCloseAt), new Date(now), 2, [m.symbol]);
+      const items = await newsBetween(new Date(prevCloseAt), new Date(now), 2, [symbol]);
       items.forEach(logHeadline);
-      log = dayLog.get(m.symbol);
+      log = dayLog.get(symbol);
     }
     const reason = missReason(log, Date.parse(stats.startedAt), cfg.movePct);
     const h = log?.headlines.filter((x) => !x.roundup).at(-1) ?? log?.headlines.at(-1);
     await upsertMiss({
       day: today,
-      symbol: m.symbol,
+      symbol,
       dayChangePct: change,
-      price: m.price,
+      price: snap.price,
       prevClose: snap.prevClose,
       dayVolume: snap.dayVolume,
       reasonCode: reason.code,
@@ -479,10 +498,12 @@ async function scanMisses() {
       newsAt: h ? new Date(h.at).toISOString() : null,
       origin: h?.origin ?? null,
     });
-    missRecorded.set(m.symbol, Math.abs(change));
+    missRecorded.set(symbol, Math.abs(change));
+    lastMissScan.recorded++;
     stats.misses++;
   }
 }
+let lastMissScan = { at: "", checked: 0, bigMovers: 0, recorded: 0 };
 
 // ---------- Paper trades ----------
 
@@ -595,7 +616,7 @@ async function saveStatus() {
       watchingFromOpen: session?.watches.size ?? 0,
       openTrades: openTrades.size,
       market: market?.is_open ?? null,
-      missedMoveCheck: moversAvailable ? "on" : "off (movers list not available on this Alpaca plan)",
+      lastMissScan,
     });
   } catch (e) {
     noteError("status", e);
@@ -641,6 +662,15 @@ async function main() {
   every(30, "trades", manageTrades);
   every(300, "missed moves", scanMisses);
   every(300, "follow-up", followUp);
+  // A line in the logs every 10 minutes during the session, so it's clear the monitor is alive.
+  every(600, "heartbeat", async () => {
+    if (!market?.is_open) return;
+    log(
+      `heartbeat: ${stats.newsSeen} headlines since start, watching ${watches.size} (+${session?.watches.size ?? 0} from the open), ` +
+        `${stats.alerts} alerts, ${openTrades.size} open trades; last missed-move check ${lastMissScan.at || "not yet"}: ` +
+        `${lastMissScan.checked} stocks, ${lastMissScan.bigMovers} up/down ${cfg.missMovePct * 100}%+, ${lastMissScan.recorded} new misses`,
+    );
+  });
   // Status every 10 minutes while the market is open (so problems show on the dashboard quickly),
   // hourly otherwise (each write wakes the database).
   let lastStatusAt = Date.now();
