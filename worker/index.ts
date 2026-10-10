@@ -66,7 +66,7 @@ import {
   type NewAlert,
 } from "../lib/db.ts";
 import { sendAlertEmail } from "../lib/email.ts";
-import { nextDayClose, priceAfter, resultsDone } from "../lib/results.ts";
+import { nextDayClose, priceAfter, resultsDone, sameDayClose } from "../lib/results.ts";
 
 const cfg = loadConfig();
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
@@ -698,10 +698,13 @@ async function followUp() {
       const at = Date.parse(a.alerted_at);
       if (!a.results_done && now - at >= 15 * 60_000) {
         const min = await bars(a.symbol, "1Min", new Date(at), new Date(Math.min(now, at + 75 * 60_000)));
-        const daily = now - at > 12 * 3_600_000 ? await bars(a.symbol, "1Day", new Date(at), new Date(now)) : [];
+        // Daily bars once the alert's session is over (4:00 PM plus a few minutes for the bar to settle).
+        const sessionOver = now > nyToUtc(nyDate(at), "16:00") + 10 * 60_000;
+        const daily = sessionOver ? await bars(a.symbol, "1Day", new Date(nyToUtc(nyDate(at), "00:00")), new Date(now)) : [];
         const r = {
           price15m: a.price_15m ?? priceAfter(min, at, 15),
           price60m: a.price_60m ?? priceAfter(min, at, 60),
+          close0d: a.close_0d ?? sameDayClose(daily, at),
           close1d: a.close_1d ?? nextDayClose(daily, at),
         };
         await setResults(a.id, { ...r, done: resultsDone(r, at, now) });

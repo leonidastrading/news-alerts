@@ -94,6 +94,7 @@ const share = (xs: number[]) => (xs.length ? `${Math.round((xs.filter((x) => x >
 
 function summarize(alerts: AlertRow[]) {
   const r60 = alerts.map((a) => rideReturn(a.direction, a.price, a.price_60m)).filter((x): x is number => x != null);
+  const r0d = alerts.map((a) => rideReturn(a.direction, a.price, a.close_0d)).filter((x): x is number => x != null);
   const r1d = alerts.map((a) => rideReturn(a.direction, a.price, a.close_1d)).filter((x): x is number => x != null);
   const closed = alerts.filter((a) => a.pnl != null);
   return {
@@ -104,6 +105,8 @@ function summarize(alerts: AlertRow[]) {
     pnl: closed.length ? closed.reduce((s, a) => s + a.pnl!, 0) : null,
     kept60: share(r60),
     avg60: avg(r60),
+    kept0d: share(r0d),
+    avg0d: avg(r0d),
     kept1d: share(r1d),
     avg1d: avg(r1d),
   };
@@ -178,6 +181,11 @@ function Dashboard({ alerts, misses: allMisses, status, positions }: { alerts: A
           <span className="label">Kept going after 60 min</span>
           <span className="value">{all.kept60}</span>
           <span className="sub">avg {pct(all.avg60, 2)} riding the move</span>
+        </div>
+        <div className="tile">
+          <span className="label">Kept going to the close</span>
+          <span className="value">{all.kept0d}</span>
+          <span className="sub">avg {pct(all.avg0d, 2)} riding the move</span>
         </div>
         <div className="tile">
           <span className="label">Kept going to next close</span>
@@ -399,6 +407,7 @@ function AlertCard({ a }: { a: AlertRow }) {
           <dl>
             <Ride label="+15 min" a={a} later={a.price_15m} />
             <Ride label="+60 min" a={a} later={a.price_60m} />
+            <Ride label="That day's close" a={a} later={a.close_0d} />
             <Ride label="Next close" a={a} later={a.close_1d} />
           </dl>
         </section>
@@ -525,6 +534,7 @@ function Breakdown({ heading, groups }: { heading: string; groups: [string, Aler
             <th className="num">Paper P&amp;L</th>
             <th className="num">Kept going 60 min</th>
             <th className="num">Avg 60 min</th>
+            <th className="num">Avg to the close</th>
             <th className="num">Avg next close</th>
           </tr>
         </thead>
@@ -540,6 +550,7 @@ function Breakdown({ heading, groups }: { heading: string; groups: [string, Aler
                 <td className={`num ${tone(g.pnl)}`}>{pnlUsd(g.pnl)}</td>
                 <td className="num">{g.kept60}</td>
                 <td className={`num ${tone(g.avg60)}`}>{pct(g.avg60, 2)}</td>
+                <td className={`num ${tone(g.avg0d)}`}>{pct(g.avg0d, 2)}</td>
                 <td className={`num ${tone(g.avg1d)}`}>{pct(g.avg1d, 2)}</td>
               </tr>
             );

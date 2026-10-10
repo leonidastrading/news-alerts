@@ -23,7 +23,7 @@ import {
 } from "./detect.ts";
 import { categorize } from "./category.ts";
 import { nyToUtc } from "./time.ts";
-import { nextDayClose, priceAfter, resultsDone } from "./results.ts";
+import { nextDayClose, priceAfter, resultsDone, sameDayClose } from "./results.ts";
 import { alertSubject } from "./email.ts";
 
 const now = Date.parse("2026-10-08T17:00:00Z");
@@ -308,4 +308,15 @@ test("when an alert isn't traded", () => {
 test("entry limit prices", () => {
   assert.equal(entryLimit(10.53, -1, 0.005), 10.48, "short: no lower than 0.5% under the alert price");
   assert.equal(entryLimit(77.17, 1, 0.005), 77.55, "long: no higher than 0.5% over");
+});
+
+test("closing price on the alert's day", () => {
+  const at = Date.parse("2026-10-09T14:41:22Z"); // CCI, 10:41 AM
+  const daily = [
+    { t: Date.parse("2026-10-09T04:00:00Z"), c: 79.1 },
+    { t: Date.parse("2026-10-12T04:00:00Z"), c: 80.2 },
+  ];
+  assert.equal(sameDayClose(daily, at), 79.1);
+  assert.equal(nextDayClose(daily, at), 80.2);
+  assert.equal(sameDayClose([], at), null);
 });

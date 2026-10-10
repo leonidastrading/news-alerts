@@ -27,6 +27,8 @@ export type AlertRow = {
   price_15m: number | null;
   price_60m: number | null;
   close_1d: number | null;
+  /** Closing price on the day of the alert (IEX's last trade of the session). */
+  close_0d: number | null;
   results_done: boolean;
   /** "intraday" (news while open) or "preopen" (news while closed, traded on an opening-range break). */
   kind: string;
@@ -111,7 +113,8 @@ export async function migrate() {
     ADD COLUMN IF NOT EXISTS entry_submitted_at timestamptz,
     ADD COLUMN IF NOT EXISTS entry_filled_at timestamptz,
     ADD COLUMN IF NOT EXISTS exit_filled_at timestamptz,
-    ADD COLUMN IF NOT EXISTS sp500 boolean`;
+    ADD COLUMN IF NOT EXISTS sp500 boolean,
+    ADD COLUMN IF NOT EXISTS close_0d double precision`;
   await sql`CREATE TABLE IF NOT EXISTS misses (
     id serial PRIMARY KEY,
     day date NOT NULL,
@@ -200,8 +203,11 @@ export async function setExitFill(id: number, price: number, pnl: number, filled
   await db()`UPDATE alerts SET exit_price = ${price}, pnl = ${pnl}, exit_filled_at = ${filledAt} WHERE id = ${id}`;
 }
 
-export async function setResults(id: number, r: { price15m: number | null; price60m: number | null; close1d: number | null; done: boolean }) {
-  await db()`UPDATE alerts SET price_15m = ${r.price15m}, price_60m = ${r.price60m}, close_1d = ${r.close1d},
+export async function setResults(
+  id: number,
+  r: { price15m: number | null; price60m: number | null; close0d: number | null; close1d: number | null; done: boolean },
+) {
+  await db()`UPDATE alerts SET price_15m = ${r.price15m}, price_60m = ${r.price60m}, close_0d = ${r.close0d}, close_1d = ${r.close1d},
     results_done = ${r.done} WHERE id = ${id}`;
 }
 

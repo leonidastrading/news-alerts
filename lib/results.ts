@@ -15,6 +15,12 @@ export function priceAfter(bars: Pick<Bar, "t" | "c">[], at: number, minutes: nu
   return bar ? bar.c : null;
 }
 
+/** Close on the alert's own New York date, once that day's daily bar is in. */
+export function sameDayClose(daily: Pick<Bar, "t" | "c">[], at: number): number | null {
+  const day = nyDate(at);
+  return daily.find((b) => nyDate(b.t) === day)?.c ?? null;
+}
+
 /** Close of the first trading day after the alert's New York date. */
 export function nextDayClose(daily: Pick<Bar, "t" | "c">[], at: number): number | null {
   const day = nyDate(at);
@@ -23,6 +29,6 @@ export function nextDayClose(daily: Pick<Bar, "t" | "c">[], at: number): number 
 }
 
 /** Results are final once the next-day close is in, or after five days whatever is missing. */
-export function resultsDone(r: { price60m: number | null; close1d: number | null }, at: number, now: number): boolean {
-  return (r.price60m != null && r.close1d != null) || now - at > 5 * 86_400_000;
+export function resultsDone(r: { price60m: number | null; close0d?: number | null; close1d: number | null }, at: number, now: number): boolean {
+  return (r.price60m != null && r.close0d !== null && r.close1d != null) || now - at > 5 * 86_400_000;
 }

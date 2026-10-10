@@ -47,7 +47,7 @@ h1 { margin: 0; font-size: clamp(26px, 4vw, 34px); line-height: 1.15; letter-spa
 .status.warn { color: var(--warn); }
 .notice { margin: 16px 0; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--ink-2); }
 
-.tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+.tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
 .tile { display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .tile .label { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
 .tile .value { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
