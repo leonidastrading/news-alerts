@@ -277,6 +277,13 @@ async function setRanges(s: OpenSession) {
       logWatch(sym, { kind: "preopen", startedAt: g.seenAt, outcome: r && snap ? `filtered: ${reason}` : "no opening-range data", maxMove: null, preMove: null });
       continue;
     }
+    const gap = snap.prevClose ? r.open / snap.prevClose - 1 : 0;
+    const why = Math.abs(gap) < cfg.minGap ? `gap under ${cfg.minGap * 100}%` : (await isFund(sym)) ? "fund or ETF" : null;
+    if (why) {
+      s.watches.delete(sym);
+      logWatch(sym, { kind: "preopen", startedAt: g.seenAt, outcome: `filtered: ${why}`, maxMove: null, preMove: gap });
+      continue;
+    }
     Object.assign(g, { open: r.open, rangeHigh: r.high, rangeLow: r.low, rangeVolume: r.volume, prevClose: snap.prevClose ?? undefined });
   }
   log(`opening ranges set for ${s.watches.size} stocks`);
@@ -424,6 +431,12 @@ async function fire(a: NewAlert) {
   stats.alerts++;
   pendingCount++;
   const now = a.alertedAt.getTime();
+  // Overnight/weekend news is logged with its results but not traded or emailed (and not counted in the cap).
+  if (a.kind === "preopen" && !cfg.preopenTrading) {
+    log(`ALERT (logged only: pre-open) ${a.symbol} ${a.direction > 0 ? "up" : "down"} after "${a.headline}"`);
+    await setTradeOpened(id, "skipped: pre-open alerts are logged only", null, null);
+    return;
+  }
   await deleteMiss(nyDate(now), a.symbol).catch((e) => noteError(`miss cleanup ${a.symbol}`, e));
   if (sentDay !== nyDate(now)) {
     sentDay = nyDate(now);
@@ -487,7 +500,7 @@ async function missUniverse(): Promise<string[]> {
 const screenerWarned = new Set<string>();
 
 // Funds, ETFs and leveraged/inverse products move with what they hold, not on their own news.
-const FUND_NAME = /\b(ETF|ETN|ETP|Fund|Index Fund|Daily|Inverse|Leveraged|UltraPro|UltraShort|ProShares|Direxion|\d+(\.\d+)?X)\b/i;
+const FUND_NAME = /\b(ETF|ETN|ETP|Fund|Index Fund|Daily|Inverse|Leveraged|UltraPro|UltraShort|ProShares|Direxion|SPDR|iShares|Invesco QQQ|Preferred|\d+(\.\d+)?X)\b/i;
 const assetNames = new Map<string, string>();
 async function isFund(symbol: string): Promise<boolean> {
   let name = assetNames.get(symbol);
@@ -582,6 +595,7 @@ async function openTrade(id: number, symbol: string, direction: number, price: n
   };
   try {
     if (!market?.is_open) return await skip("market closed");
+    if (await isFund(symbol)) return await skip("fund or ETF");
     const qty = Math.floor(cfg.tradeNotional / price);
     if (qty < 1) return await skip("price above trade size");
     if (await position(symbol)) return await skip("already holding");

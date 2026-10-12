@@ -320,3 +320,12 @@ test("closing price on the alert's day", () => {
   assert.equal(nextDayClose(daily, at), 80.2);
   assert.equal(sameDayClose([], at), null);
 });
+
+test("an opening-range break only counts in the gap's direction", () => {
+  const c = { confirmTicks: 1, breakoutBuffer: 0.001 };
+  const end = now + 3_600_000;
+  const g: GapWatch = { symbol: "X", news: news(["X"]), seenAt: now, hits: 0, direction: 0, newsCount: 1, prevClose: 100, open: 106, rangeHigh: 107, rangeLow: 105 };
+  evaluateBreakout(g, snap(106, now), now, end, c); // inside: armed
+  assert.equal(evaluateBreakout(g, snap(104, now), now, end, c), "wait", "gap up, break down: the gap fading, not news");
+  assert.equal(evaluateBreakout(g, snap(108, now), now, end, c), "alert");
+});

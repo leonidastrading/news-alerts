@@ -183,7 +183,9 @@ export function evaluateBreakout(g: GapWatch, s: Snapshot, now: number, endAt: n
   if (now > endAt) return "expire";
   if (g.rangeHigh === undefined || g.rangeLow === undefined || isStale(s, now)) return "wait";
   g.lastPrice = s.price;
-  const dir = s.price > g.rangeHigh * (1 + cfg.breakoutBuffer) ? 1 : s.price < g.rangeLow * (1 - cfg.breakoutBuffer) ? -1 : 0;
+  let dir: 1 | -1 | 0 = s.price > g.rangeHigh * (1 + cfg.breakoutBuffer) ? 1 : s.price < g.rangeLow * (1 - cfg.breakoutBuffer) ? -1 : 0;
+  // Only a break in the gap's direction is the news continuing; the other way is the gap fading.
+  if (g.open && g.prevClose && Math.sign(g.open - g.prevClose) !== dir) dir = 0;
   // A stock already outside its range when we first look (e.g. the monitor started late) hasn't
   // broken out in front of us: wait until it trades back inside, then count a fresh break.
   if (!g.armed) {
