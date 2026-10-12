@@ -56,7 +56,10 @@ export type Config = {
   maxDayMoveToTrade: number;
   /** No new trades in the last this-many minutes of the session (15 = 3:45 PM); alerts after that are logged only. */
   tradeCutoffMinutes: number;
-  /** Minutes before the close to send market-on-close exit orders (Alpaca takes them until about 3:50 PM). */
+  /**
+   * Minutes before the close to send market-on-close exit orders; 0 (the default) closes at market at
+   * 3:55 PM instead. On Oct 12 market-on-close orders left 14 of 23 paper positions open overnight.
+   */
   mocLeadMinutes: number;
   /** Paper-trade and email pre-open (overnight/weekend news) alerts; off logs them on the dashboard only. */
   preopenTrading: boolean;
@@ -92,7 +95,7 @@ export function loadConfig(): Config {
     limitSlippage: num("LIMIT_SLIPPAGE_PCT", 0.5) / 100,
     maxDayMoveToTrade: num("MAX_DAY_MOVE_TO_TRADE_PCT", 15) / 100,
     tradeCutoffMinutes: num("TRADE_CUTOFF_MINUTES", 15),
-    mocLeadMinutes: num("MOC_LEAD_MINUTES", 12),
+    mocLeadMinutes: num("MOC_LEAD_MINUTES", 0),
     preopenTrading: (process.env.PREOPEN_TRADING ?? "off").toLowerCase() === "on",
     minGap: num("MIN_GAP_PCT", 3) / 100,
   };

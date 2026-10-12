@@ -243,6 +243,9 @@ export async function position(symbol: string): Promise<Position | null> {
 export const closePosition = (symbol: string) =>
   call<Order>(PAPER, `/v2/positions/${encodeURIComponent(symbol)}`, { method: "DELETE" });
 
+/** Close every position in the paper account and cancel its open orders. */
+export const closeAllPositions = () => call<unknown>(PAPER, "/v2/positions?cancel_orders=true", { method: "DELETE" });
+
 export const hasPosition = async (symbol: string) => (await position(symbol)) != null;
 
 // ---------- S&P 500 membership ----------

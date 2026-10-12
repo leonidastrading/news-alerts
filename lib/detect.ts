@@ -223,8 +223,8 @@ export function rideReturn(direction: number, from: number | null, to: number | 
 export function exitPlan(openedAt: number, now: number, closeAt: number, holdMinutes: number, mocLeadMinutes: number): "now" | "moc" | "wait" {
   if (nyDate(openedAt) !== nyDate(now)) return "now";
   if (holdMinutes > 0 && now - openedAt >= holdMinutes * 60_000) return "now";
-  if (closeAt - now < 2 * 60_000) return "now";
-  if (closeAt - now <= mocLeadMinutes * 60_000) return "moc";
+  if (mocLeadMinutes > 0 && closeAt - now <= mocLeadMinutes * 60_000) return closeAt - now < 2 * 60_000 ? "now" : "moc";
+  if (closeAt - now < 5 * 60_000) return "now";
   return "wait";
 }
 

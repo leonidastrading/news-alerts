@@ -10,6 +10,8 @@ import {
   calendar,
   clock,
   closePosition,
+  closeAllPositions,
+  positions as listPositions,
   credentials,
   getOrder,
   mostActives,
@@ -215,6 +217,7 @@ async function checkSession() {
   if (sessionDate !== today) {
     sessionDate = today;
     session = null;
+    await closeLeftovers().catch((e) => noteError("leftover positions", e));
     await setUpOpen(today, now);
   }
   if (session && !session.ranged && now >= session.rangeEnd) await setRanges(session);
@@ -626,6 +629,32 @@ async function openTrade(id: number, symbol: string, direction: number, price: n
   }
 }
 
+// Every paper trade is closed the same day. Anything still in the account at the start of a session
+// (a close that failed, or was only partly filled) is closed at once, except today's own open trades
+// when the monitor restarts mid-day.
+async function closeLeftovers() {
+  const ours = new Set([...openTrades.values()].map((t) => t.symbol));
+  for (const p of await listPositions()) {
+    if (ours.has(p.symbol)) continue;
+    log(`closing leftover position ${p.symbol} (${p.qty} shares) from an earlier day`);
+    await closePosition(p.symbol).catch((e) => noteError(`close leftover ${p.symbol}`, e));
+  }
+}
+
+// Safety net 3 minutes before the close: whatever is still open after the exits is closed at market.
+let sweptDay = "";
+async function sweepBeforeClose() {
+  if (!market?.is_open) return;
+  const now = Date.now();
+  if (Date.parse(market.next_close) - now > 3 * 60_000 || sweptDay === nyDate(now)) return;
+  sweptDay = nyDate(now);
+  const left = await listPositions();
+  if (left.length === 0) return;
+  log(`closing ${left.length} positions still open 3 minutes before the close: ${left.map((p) => p.symbol).join(", ")}`);
+  await closeAllPositions();
+  openTrades.clear();
+}
+
 async function closeNow(id: number, symbol: string) {
   try {
     const order = await closePosition(symbol);
@@ -688,6 +717,8 @@ async function followUp() {
   const rows: AlertRow[] = await pendingAlerts();
   pendingCount = rows.length;
   const now = Date.now();
+  // Alpaca allows about 200 requests a minute; leave room for trading when many alerts need results.
+  let budget = 40;
   for (const a of rows) {
     try {
       if (a.entry_order_id && a.entry_price == null && !a.trade_status?.startsWith("error")) {
@@ -710,7 +741,7 @@ async function followUp() {
         }
       }
       const at = Date.parse(a.alerted_at);
-      if (!a.results_done && now - at >= 15 * 60_000) {
+      if (!a.results_done && now - at >= 15 * 60_000 && budget-- > 0) {
         const min = await bars(a.symbol, "1Min", new Date(at), new Date(Math.min(now, at + 75 * 60_000)));
         // Daily bars once the alert's session is over (4:00 PM plus a few minutes for the bar to settle).
         const sessionOver = now > nyToUtc(nyDate(at), "16:00") + 10 * 60_000;
@@ -784,6 +815,7 @@ async function main() {
     market = await clock();
   });
   every(30, "trades", manageTrades);
+  every(20, "close sweep", sweepBeforeClose);
   every(300, "missed moves", scanMisses);
   every(300, "follow-up", followUp);
   // A line in the logs every 10 minutes during the session, so it's clear the monitor is alive.

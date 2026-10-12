@@ -329,3 +329,10 @@ test("an opening-range break only counts in the gap's direction", () => {
   assert.equal(evaluateBreakout(g, snap(104, now), now, end, c), "wait", "gap up, break down: the gap fading, not news");
   assert.equal(evaluateBreakout(g, snap(108, now), now, end, c), "alert");
 });
+
+test("without market-on-close, trades close at market 5 minutes before the close", () => {
+  const opened = Date.parse("2026-10-12T14:00:00Z");
+  const close = Date.parse("2026-10-12T20:00:00Z");
+  assert.equal(exitPlan(opened, Date.parse("2026-10-12T19:54:00Z"), close, 0, 0), "wait");
+  assert.equal(exitPlan(opened, Date.parse("2026-10-12T19:55:30Z"), close, 0, 0), "now");
+});
