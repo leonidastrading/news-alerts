@@ -255,8 +255,8 @@ async function setUpOpen(today: string, now: number) {
     .sort((x, y) => y[1].count - x[1].count)
     .slice(0, 400);
   const gw = new Map<string, TrackedGap>();
-  for (const [symbol, { news, count }] of byTicker) {
-    gw.set(symbol, { symbol, news, newsCount: count, seenAt: now, hits: 0, direction: 0 });
+  for (const [symbol, { news, count, earnings }] of byTicker) {
+    gw.set(symbol, { symbol, news, newsCount: count, earnings, seenAt: now, hits: 0, direction: 0 });
   }
   session = { date: today, openAt, rangeEnd: openAt + cfg.openRangeMinutes * 60_000, endAt, ranged: false, watches: gw };
   stats.preOpenWatched += gw.size;
@@ -401,7 +401,7 @@ async function fireBreakout(g: GapWatch, s: Snapshot, now: number) {
     newsId: g.news.id,
     headline: g.news.headline,
     summary: g.news.summary,
-    category: categorize(g.news.headline, g.news.summary),
+    category: g.earnings ? "Earnings" : categorize(g.news.headline, g.news.summary),
     origin: classifyOrigin(g.news),
     url: g.news.url,
     source: g.news.source,
@@ -435,9 +435,11 @@ async function fire(a: NewAlert) {
   pendingCount++;
   const now = a.alertedAt.getTime();
   // Overnight/weekend news is logged with its results but not traded or emailed (and not counted in the cap).
-  if (a.kind === "preopen" && !cfg.preopenTrading) {
+  // Only earnings gaps are traded by default (PREOPEN_TRADING).
+  if (a.kind === "preopen" && (cfg.preopenTrading === "off" || (cfg.preopenTrading === "earnings" && a.category !== "Earnings"))) {
     log(`ALERT (logged only: pre-open) ${a.symbol} ${a.direction > 0 ? "up" : "down"} after "${a.headline}"`);
-    await setTradeOpened(id, "skipped: pre-open alerts are logged only", null, null);
+    const what = cfg.preopenTrading === "earnings" ? "non-earnings pre-open alerts are logged only" : "pre-open alerts are logged only";
+    await setTradeOpened(id, `skipped: ${what}`, null, null);
     return;
   }
   await deleteMiss(nyDate(now), a.symbol).catch((e) => noteError(`miss cleanup ${a.symbol}`, e));

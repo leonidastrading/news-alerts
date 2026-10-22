@@ -61,8 +61,11 @@ export type Config = {
    * 3:55 PM instead. On Oct 12 market-on-close orders left 14 of 23 paper positions open overnight.
    */
   mocLeadMinutes: number;
-  /** Paper-trade and email pre-open (overnight/weekend news) alerts; off logs them on the dashboard only. */
-  preopenTrading: boolean;
+  /**
+   * Which pre-open (overnight/weekend news) alerts are paper-traded and emailed: "earnings" (the
+   * default) only earnings reports and guidance, "on" all of them, "off" none. The rest are logged.
+   */
+  preopenTrading: "off" | "earnings" | "on";
   /** Pre-open news only counts if the stock gapped at least this much from the previous close (fraction). */
   minGap: number;
 };
@@ -96,7 +99,9 @@ export function loadConfig(): Config {
     maxDayMoveToTrade: num("MAX_DAY_MOVE_TO_TRADE_PCT", 15) / 100,
     tradeCutoffMinutes: num("TRADE_CUTOFF_MINUTES", 15),
     mocLeadMinutes: num("MOC_LEAD_MINUTES", 0),
-    preopenTrading: (process.env.PREOPEN_TRADING ?? "off").toLowerCase() === "on",
+    preopenTrading: (["off", "on"].includes((process.env.PREOPEN_TRADING ?? "").toLowerCase())
+      ? process.env.PREOPEN_TRADING!.toLowerCase()
+      : "earnings") as Config["preopenTrading"],
     minGap: num("MIN_GAP_PCT", 3) / 100,
   };
 }

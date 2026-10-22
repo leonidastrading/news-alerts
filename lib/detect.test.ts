@@ -9,6 +9,7 @@ import {
   openingRange,
   overAlertLimit,
   preOpenNews,
+  isEarningsNews,
   rejectReason,
   rideReturn,
   exitPlan,
@@ -335,4 +336,19 @@ test("without market-on-close, trades close at market 5 minutes before the close
   const close = Date.parse("2026-10-12T20:00:00Z");
   assert.equal(exitPlan(opened, Date.parse("2026-10-12T19:54:00Z"), close, 0, 0), "wait");
   assert.equal(exitPlan(opened, Date.parse("2026-10-12T19:55:30Z"), close, 0, 0), "now");
+});
+
+test("pre-open earnings news is flagged and its headline kept (NOK)", () => {
+  const at = (m: number) => new Date(now - m * 60_000).toISOString();
+  const items: NewsItem[] = [
+    { ...news(["NOK"]), id: 1, headline: "Nokia Q3 EPS $0.10 Beats $0.09 Estimate, Sales $5.93B", createdAt: at(300) },
+    { ...news(["NOK"]), id: 2, headline: "ICEYE and Nokia partner with the Ministry of Defence of Ukraine", createdAt: at(60) },
+    { ...news(["VZ"]), id: 3, headline: "Verizon expands fiber in Texas", createdAt: at(30) },
+  ];
+  const m = preOpenNews(items, cfg);
+  assert.equal(m.get("NOK")!.earnings, true);
+  assert.match(m.get("NOK")!.news.headline, /Q3 EPS/, "the earnings headline, not the later one");
+  assert.equal(m.get("NOK")!.count, 2);
+  assert.equal(m.get("VZ")!.earnings, false);
+  assert.equal(isEarningsNews({ headline: "Nokia Sinks 9% on Q3 Beat as It Holds Outlook", summary: "" }), true);
 });

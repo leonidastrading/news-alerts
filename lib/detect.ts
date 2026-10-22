@@ -10,6 +10,7 @@
 import type { Config } from "./config.ts";
 import { nyDate } from "./time.ts";
 import { classifyOrigin } from "./origin.ts";
+import { categorize } from "./category.ts";
 
 export type NewsItem = {
   id: number;
@@ -51,6 +52,8 @@ export type GapWatch = Tracking & {
   rangeVolume?: number;
   /** Set once a price inside the opening range has been seen; only breaks after that count. */
   armed?: boolean;
+  /** One of the headlines since the last close was an earnings report or guidance. */
+  earnings?: boolean;
 };
 
 const US_TICKER = /^[A-Z]{1,5}(\.[A-Z])?$/;
@@ -80,14 +83,29 @@ export function symbolsToWatch(news: NewsItem, now: number, cfg: Pick<Config, "m
   return tickersOf(news, cfg);
 }
 
-/** Latest headline and headline count per ticker, for news published while the market was closed. */
-export function preOpenNews(items: NewsItem[], cfg: Pick<Config, "maxSymbolsPerHeadline">): Map<string, { news: NewsItem; count: number }> {
-  const out = new Map<string, { news: NewsItem; count: number }>();
+/** An earnings report or guidance update (the catalyst the earnings strategy trades). */
+export const isEarningsNews = (n: Pick<NewsItem, "headline" | "summary">) => ["Earnings", "Guidance"].includes(categorize(n.headline, n.summary));
+
+/**
+ * Latest headline and headline count per ticker, for news published while the market was closed.
+ * When one of them is an earnings report or guidance, that's the headline kept and `earnings` is set.
+ */
+export function preOpenNews(
+  items: NewsItem[],
+  cfg: Pick<Config, "maxSymbolsPerHeadline">,
+): Map<string, { news: NewsItem; count: number; earnings: boolean }> {
+  const out = new Map<string, { news: NewsItem; count: number; earnings: boolean }>();
   for (const n of items) {
+    const e = isEarningsNews(n);
     for (const s of tickersOf(n, cfg)) {
       const prev = out.get(s);
-      if (!prev) out.set(s, { news: n, count: 1 });
-      else out.set(s, { news: n.createdAt >= prev.news.createdAt ? n : prev.news, count: prev.count + 1 });
+      if (!prev) {
+        out.set(s, { news: n, count: 1, earnings: e });
+        continue;
+      }
+      // Prefer the latest earnings headline, else the latest headline.
+      const better = e !== prev.earnings ? e : n.createdAt >= prev.news.createdAt;
+      out.set(s, { news: better ? n : prev.news, count: prev.count + 1, earnings: prev.earnings || e });
     }
   }
   return out;

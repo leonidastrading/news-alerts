@@ -1,6 +1,6 @@
 // A rough label for what kind of news a headline is, from keywords. First match wins.
 const RULES: [string, RegExp][] = [
-  ["Earnings", /\b(earnings|eps|quarterly results|q[1-4] (results|sales|revenue)|reports? (q[1-4]|fiscal|first|second|third|fourth)|beats|misses|tops estimates)\b/i],
+  ["Earnings", /\b(earnings|eps|quarterly results|q[1-4] (results|sales|revenue|beat|miss)|reports? (q[1-4]|fiscal|first|second|third|fourth)|beats?|misses|tops estimates)\b/i],
   ["Guidance", /\b(guidance|outlook|forecasts?|raises (fy|full-year|annual)|lowers (fy|full-year|annual)|reaffirms)\b/i],
   ["M&A", /\b(acquires?|acquisition|merger|merge|to buy|buyout|takeover|tender offer|to be acquired|deal to (buy|acquire)|spin-?off)\b/i],
   ["FDA / clinical", /\b(fda|clinical|phase (1|2|3|i|ii|iii)|trial|approval|approves|breakthrough therapy|pdufa|ema)\b/i],

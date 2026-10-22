@@ -79,9 +79,10 @@ export default async function Page() {
         <h1>Stocks that moved after a headline</h1>
         <p className="lede">
           <strong>Intraday news:</strong> when a stock moves {process.env.MOVE_PCT ?? "1.5"}% from where it was when the headline arrived.{" "}
-          <strong>News from while the market was closed:</strong> when a stock breaks out of its first {process.env.OPEN_RANGE_MINUTES ?? "5"}{" "}
-          minutes&rsquo; range after the open. Each alert is emailed and paper-traded in the direction of the move with a limit order, held to the end of the
-          day and closed at the closing price. No new trades after 3:45 PM; later alerts are only logged.
+          <strong>Earnings and other news from while the market was closed:</strong> when a stock that gapped 3% or more breaks out of
+          its first {process.env.OPEN_RANGE_MINUTES ?? "5"} minutes&rsquo; range in the gap&rsquo;s direction; only earnings gaps are
+          traded, the rest are logged. Each alert is emailed and paper-traded in the direction of the move with a limit order, held to the end of the
+          day and closed at 3:55 PM. No new trades after 3:45 PM; later alerts are only logged.
         </p>
       </header>
       {"error" in data ? <div className="notice">{data.error}</div> : <Dashboard alerts={data.alerts} misses={data.misses} status={data.status} positions={positions} />}
@@ -123,6 +124,11 @@ function Dashboard({ alerts, misses: allMisses, status, positions }: { alerts: A
   // A stock that alerted later the same day isn't a miss.
   const alertedDays = new Set(alerts.map((a) => `${nyDay(a.alerted_at)} ${a.symbol}`));
   const misses = allMisses.filter((m) => !alertedDays.has(`${m.day} ${m.symbol}`));
+  const strategyGroups: [string, AlertRow[]][] = [
+    ["Intraday news", alerts.filter((a) => a.kind !== "preopen")],
+    ["Earnings gaps (pre-open, traded)", alerts.filter((a) => a.kind === "preopen" && a.category === "Earnings")],
+    ["Other pre-open news (logged only)", alerts.filter((a) => a.kind === "preopen" && a.category !== "Earnings")],
+  ];
   const timeGroups: [string, AlertRow[]][] = [
     ["Open – 10:30 AM", alerts.filter((a) => nyMinutes(a.alerted_at) < 630)],
     ["10:30 AM – 3:00 PM", alerts.filter((a) => nyMinutes(a.alerted_at) >= 630 && nyMinutes(a.alerted_at) < 900)],
@@ -201,6 +207,7 @@ function Dashboard({ alerts, misses: allMisses, status, positions }: { alerts: A
 
       <OpenPositions positions={positions} alerts={alerts} />
 
+      {alerts.length > 0 && <Breakdown heading="Strategy" groups={strategyGroups} />}
       {alerts.length > 0 && <Breakdown heading="News · side" groups={groups} />}
       {alerts.length > 0 && <Breakdown heading="News origin" groups={originGroups} />}
       {alerts.length > 0 && <Breakdown heading="Time of day" groups={timeGroups} />}
@@ -628,7 +635,7 @@ function OpenPositions({ positions, alerts }: { positions: Positions; alerts: Al
           </table>
         </div>
       )}
-      <p className="footnote">Live from the Alpaca paper account each time the page loads. Positions close automatically at the closing price (a market-on-close order sent about 12 minutes before the close).</p>
+      <p className="footnote">Live from the Alpaca paper account each time the page loads. Positions close automatically at 3:55 PM; anything still open at 3:57 is closed too.</p>
     </section>
   );
 }
