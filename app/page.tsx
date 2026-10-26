@@ -141,7 +141,7 @@ function Dashboard({ alerts, misses: allMisses, status, positions }: { alerts: A
       ["Not tagged (before the S&P 500 tag)", alerts.filter((a) => a.sp500 == null)],
     ] as [string, AlertRow[]][]
   ).filter(([, rows]) => rows.length > 0);
-  const stale = status && Date.now() - Date.parse(status.updated_at) > 2 * 3_600_000;
+  const stale = status && Date.now() - Date.parse(status.updated_at) > 4 * 3_600_000;
   const originGroups: [string, AlertRow[]][] = ORIGINS.map((o): [string, AlertRow[]] => [o, alerts.filter((a) => (a.origin ?? "Other") === o)]).filter(
     ([, rows]) => rows.length > 0,
   );

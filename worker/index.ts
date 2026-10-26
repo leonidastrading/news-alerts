@@ -185,7 +185,7 @@ function connectNews(attempt = 0) {
         stats.stream = "live";
         attempt = 0;
         log("news stream live");
-        void saveStatus();
+        if (market?.is_open) void saveStatus();
       } else if (m.T === "n") onNews(toNewsItem(m as Parameters<typeof toNewsItem>[0]));
       else if (m.T === "error") noteError("news stream", `${m.code} ${m.msg}`);
     }
@@ -193,7 +193,7 @@ function connectNews(attempt = 0) {
   ws.onclose = () => {
     const wasLive = stats.stream === "live";
     stats.stream = "reconnecting";
-    if (wasLive) void saveStatus();
+    if (wasLive && market?.is_open) void saveStatus();
     const delay = Math.min(60_000, 2_000 * 2 ** attempt);
     log(`news stream closed; reconnecting in ${delay / 1000}s`);
     setTimeout(() => connectNews(attempt + 1), delay);
@@ -714,8 +714,18 @@ async function manageTrades() {
 
 // ---------- Follow-up: fills and results ----------
 
+// Neon's free plan has 100 compute-hours a month and the database stays awake for 5 minutes after
+// each query, so a query every 5 minutes keeps it on around the clock (it ran out on Oct 26). While
+// the market is closed the worker touches the database only every few hours.
+const OFF_HOURS_DB_MS = 3 * 3_600_000;
+let lastOffHoursFollowUp = 0;
+
 async function followUp() {
   if (pendingCount === 0 && openTrades.size === 0) return;
+  if (!market?.is_open) {
+    if (Date.now() - lastOffHoursFollowUp < OFF_HOURS_DB_MS) return;
+    lastOffHoursFollowUp = Date.now();
+  }
   const rows: AlertRow[] = await pendingAlerts();
   pendingCount = rows.length;
   const now = Date.now();
@@ -830,10 +840,10 @@ async function main() {
     );
   });
   // Status every 10 minutes while the market is open (so problems show on the dashboard quickly),
-  // hourly otherwise (each write wakes the database).
+  // every 3 hours otherwise (each write wakes the database).
   let lastStatusAt = Date.now();
   every(600, "status", async () => {
-    if (!market?.is_open && Date.now() - lastStatusAt < 55 * 60_000) return;
+    if (!market?.is_open && Date.now() - lastStatusAt < OFF_HOURS_DB_MS) return;
     lastStatusAt = Date.now();
     await saveStatus();
   });
