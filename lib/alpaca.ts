@@ -13,6 +13,18 @@ export function credentials() {
   return { key, secret };
 }
 
+/** Whether Alpaca is accepting the keys: since when it has rejected them (401/403), or null if fine. */
+export const alpacaAuth = { failingSince: null as number | null, lastOkAt: null as number | null, lastError: null as string | null };
+export function noteAuth(ok: boolean, error?: string) {
+  if (ok) {
+    alpacaAuth.failingSince = null;
+    alpacaAuth.lastOkAt = Date.now();
+  } else {
+    alpacaAuth.failingSince ??= Date.now();
+    alpacaAuth.lastError = error ?? null;
+  }
+}
+
 async function call<T>(base: string, path: string, init: RequestInit = {}): Promise<T> {
   const { key, secret } = credentials();
   const res = await fetch(base + path, {
@@ -25,6 +37,8 @@ async function call<T>(base: string, path: string, init: RequestInit = {}): Prom
     },
   });
   const text = await res.text();
+  if (res.status === 401 || res.status === 403) noteAuth(false, `HTTP ${res.status} on ${path.split("?")[0]}`);
+  else if (res.ok || res.status === 404) noteAuth(true);
   if (!res.ok) throw new Error(`Alpaca ${init.method ?? "GET"} ${path}: HTTP ${res.status} ${text.slice(0, 200)}`);
   return (text ? JSON.parse(text) : null) as T;
 }

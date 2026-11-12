@@ -19,6 +19,8 @@ import {
   newsBetween,
   newsSince,
   NEWS_STREAM,
+  alpacaAuth,
+  noteAuth,
   placeCloseOrder,
   placeEntryOrder,
   position,
@@ -67,7 +69,8 @@ import {
   type AlertRow,
   type NewAlert,
 } from "../lib/db.ts";
-import { sendAlertEmail } from "../lib/email.ts";
+import { sendAlertEmail, sendNoticeEmail } from "../lib/email.ts";
+import { likelyMarketHours, openProblems, type Problem } from "../lib/health.ts";
 import { nextDayClose, priceAfter, resultsDone, sameDayClose } from "../lib/results.ts";
 
 const cfg = loadConfig();
@@ -140,6 +143,7 @@ function noteError(where: string, e: unknown) {
 // ---------- News in ----------
 
 function onNews(n: NewsItem) {
+  lastNewsReceivedAt = Date.now();
   if (seenNews.has(n.id)) return;
   seenNews.add(n.id);
   if (seenNews.size > 5000) seenNews.delete(seenNews.values().next().value!);
@@ -179,10 +183,13 @@ function connectNews(attempt = 0) {
       return;
     }
     for (const m of msgs) {
+      if (m.T === "success" && m.msg === "authenticated") noteAuth(true);
+      if (m.T === "error" && m.code === 402) noteAuth(false, "news stream: auth failed");
       if (m.T === "success" && m.msg === "connected") ws.send(JSON.stringify({ action: "auth", key, secret }));
       else if (m.T === "success" && m.msg === "authenticated") ws.send(JSON.stringify({ action: "subscribe", news: ["*"] }));
       else if (m.T === "subscription") {
         stats.stream = "live";
+        streamDownSince = null;
         attempt = 0;
         log("news stream live");
         if (market?.is_open) void saveStatus();
@@ -193,6 +200,7 @@ function connectNews(attempt = 0) {
   ws.onclose = () => {
     const wasLive = stats.stream === "live";
     stats.stream = "reconnecting";
+    streamDownSince ??= Date.now();
     if (wasLive && market?.is_open) void saveStatus();
     const delay = Math.min(60_000, 2_000 * 2 ** attempt);
     log(`news stream closed; reconnecting in ${delay / 1000}s`);
@@ -216,6 +224,7 @@ async function checkSession() {
   const today = nyDate(now);
   if (sessionDate !== today) {
     sessionDate = today;
+    sessionSeenAt = now;
     session = null;
     await closeLeftovers().catch((e) => noteError("leftover positions", e));
     await setUpOpen(today, now);
@@ -772,6 +781,39 @@ async function followUp() {
   }
 }
 
+// ---------- Health: email when the monitor can't do its job ----------
+
+let lastNewsReceivedAt: number | null = null;
+let streamDownSince: number | null = Date.now();
+let sessionSeenAt: number | null = null;
+let healthProblems: Problem[] = [];
+
+async function checkHealth() {
+  const now = Date.now();
+  // With the keys rejected the clock can't be read, so fall back to the weekday-hours guess.
+  const marketOpen = alpacaAuth.failingSince == null && market ? market.is_open : likelyMarketHours(now);
+  const problems = openProblems({
+    now,
+    marketOpen,
+    authFailingSince: alpacaAuth.failingSince,
+    streamDownSince,
+    lastNewsAt: lastNewsReceivedAt,
+    openedAt: marketOpen && sessionDate === nyDate(now) ? sessionSeenAt : null,
+  });
+  const before = new Set(healthProblems.map((p) => p.code));
+  const opened = problems.filter((p) => !before.has(p.code));
+  const cleared = healthProblems.length > 0 && problems.length === 0;
+  healthProblems = problems;
+  if (opened.length === 0 && !cleared) return;
+  void saveStatus();
+  const subject = cleared ? "News Alerts: working again" : `News Alerts problem: ${opened.map((p) => p.text.split(" for ")[0].split(":")[0]).join("; ")}`;
+  const lines = cleared
+    ? ["The monitor is working again: Alpaca accepts the keys and news is coming in."]
+    : [...opened.map((p) => p.text), "No alerts or trades happen until this is fixed."];
+  log(`health: ${subject}`);
+  await sendNoticeEmail(subject.slice(0, 150), lines).catch((e) => noteError("health email", e));
+}
+
 // ---------- Main ----------
 
 async function saveStatus() {
@@ -783,6 +825,8 @@ async function saveStatus() {
       openTrades: openTrades.size,
       market: market?.is_open ?? null,
       lastMissScan,
+      alpaca: { ok: alpacaAuth.failingSince == null, failingSince: alpacaAuth.failingSince ? new Date(alpacaAuth.failingSince).toISOString() : null, lastOkAt: alpacaAuth.lastOkAt ? new Date(alpacaAuth.lastOkAt).toISOString() : null, lastError: alpacaAuth.lastError },
+      problems: healthProblems.map((p) => p.text),
     });
   } catch (e) {
     noteError("status", e);
@@ -809,7 +853,11 @@ function every(seconds: number, name: string, fn: () => Promise<void>) {
 async function main() {
   credentials();
   await migrate();
-  market = await clock();
+  // Rejected keys shouldn't crash the monitor into a restart loop: it keeps running and emails (checkHealth).
+  market = await clock().catch((e) => {
+    noteError("clock", e);
+    return null;
+  });
   lastAlertAt = await lastAlertTimes();
   await loadSp500();
   for (const a of await pendingAlerts()) {
@@ -823,6 +871,7 @@ async function main() {
     await checkPrices();
   });
   every(15, "news fallback", pollNewsFallback);
+  every(60, "health", checkHealth);
   every(60, "clock", async () => {
     market = await clock();
   });
@@ -842,6 +891,7 @@ async function main() {
   // Status every 10 minutes while the market is open (so problems show on the dashboard quickly),
   // every 3 hours otherwise (each write wakes the database).
   let lastStatusAt = Date.now();
+  void saveStatus(); // so a restart shows on the dashboard right away
   every(600, "status", async () => {
     if (!market?.is_open && Date.now() - lastStatusAt < OFF_HOURS_DB_MS) return;
     lastStatusAt = Date.now();
@@ -850,7 +900,8 @@ async function main() {
 }
 
 process.on("unhandledRejection", (e) => noteError("unhandled", e));
-main().catch((e) => {
+main().catch(async (e) => {
   log("FATAL", e);
+  await sendNoticeEmail("News Alerts: the monitor crashed", [`It stopped at startup: ${e instanceof Error ? e.message : String(e)}`, "Railway restarts it automatically; if this email keeps coming, check the Railway logs."]).catch(() => {});
   process.exit(1);
 });

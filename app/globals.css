@@ -45,6 +45,10 @@ h1 { margin: 0; font-size: clamp(26px, 4vw, 34px); line-height: 1.15; letter-spa
 
 .status { margin: 8px 0 20px; font-size: 13px; color: var(--muted); }
 .status.warn { color: var(--warn); }
+.status .bad { color: var(--neg); font-weight: 600; }
+.notice.problem { border-color: var(--neg); color: var(--neg); font-weight: 600; }
+.notice.problem p { margin: 0 0 6px; }
+.notice.problem p:last-child { margin: 0; }
 .notice { margin: 16px 0; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--ink-2); }
 
 .tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }

@@ -3,6 +3,7 @@ import { MISS_LABELS } from "@/lib/misses";
 import { ORIGINS } from "@/lib/origin";
 import { rideReturn } from "@/lib/detect";
 import { positions as fetchPositions, type Position } from "@/lib/alpaca";
+import { likelyMarketHours } from "@/lib/health";
 
 export const dynamic = "force-dynamic";
 
@@ -141,7 +142,13 @@ function Dashboard({ alerts, misses: allMisses, status, positions }: { alerts: A
       ["Not tagged (before the S&P 500 tag)", alerts.filter((a) => a.sp500 == null)],
     ] as [string, AlertRow[]][]
   ).filter(([, rows]) => rows.length > 0);
-  const stale = status && Date.now() - Date.parse(status.updated_at) > 4 * 3_600_000;
+  // The monitor checks in every 10 minutes in market hours and every 3 hours otherwise.
+  const stale = status && Date.now() - Date.parse(status.updated_at) > (likelyMarketHours(Date.now()) ? 25 * 60_000 : 4 * 3_600_000);
+  const alpaca = status?.info.alpaca as { ok: boolean; failingSince: string | null; lastError: string | null } | undefined;
+  const problems = [
+    ...(stale ? [`The monitor hasn't checked in since ${ago(status!.updated_at)}: it may have stopped. Check Railway's logs.`] : []),
+    ...((status?.info.problems as string[] | undefined) ?? []),
+  ];
   const originGroups: [string, AlertRow[]][] = ORIGINS.map((o): [string, AlertRow[]] => [o, alerts.filter((a) => (a.origin ?? "Other") === o)]).filter(
     ([, rows]) => rows.length > 0,
   );
@@ -154,10 +161,25 @@ function Dashboard({ alerts, misses: allMisses, status, positions }: { alerts: A
 
   return (
     <>
+      {problems.length > 0 && (
+        <div className="notice problem" role="alert">
+          {problems.map((p) => (
+            <p key={p}>{p}</p>
+          ))}
+        </div>
+      )}
       <p className={`status ${!status || stale ? "warn" : ""}`}>
         {status ? (
           <>
-            Monitor {stale ? "last" : ""} checked in {ago(status.updated_at)} · news stream {String(status.info.stream)} ·{" "}
+            Monitor {stale ? "last" : ""} checked in {ago(status.updated_at)} ·{" "}
+            {alpaca ? (
+              alpaca.ok ? (
+                <>Alpaca connected · </>
+              ) : (
+                <span className="bad">Alpaca rejecting the keys since {alpaca.failingSince ? clock(alpaca.failingSince) : "—"} · </span>
+              )
+            ) : null}
+            news stream {String(status.info.stream)} ·{" "}
             {Number(status.info.newsSeen ?? 0).toLocaleString()} headlines read since it started
             {(() => {
               const m = status.info.lastMissScan as { at?: string; checked?: number; bigMovers?: number } | undefined;

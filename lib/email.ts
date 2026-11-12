@@ -50,19 +50,27 @@ export function alertHtml(a: AlertEmail, dashboardUrl: string): string {
 </div>`;
 }
 
-export async function sendAlertEmail(a: AlertEmail): Promise<void> {
+/** A plain notice to the same address (monitor health problems). */
+export async function sendNoticeEmail(subject: string, lines: string[]): Promise<void> {
+  const url = process.env.DASHBOARD_URL ?? "";
+  const html = `<div style="font:15px/1.5 system-ui,sans-serif;max-width:600px">${lines.map((l) => `<p style="margin:0 0 10px">${esc(l)}</p>`).join("")}${
+    url ? `<p style="margin:0"><a href="${esc(url)}" style="color:#2a78d6">Dashboard</a></p>` : ""
+  }</div>`;
+  await send(subject, html);
+}
+
+async function send(subject: string, html: string): Promise<void> {
   const key = process.env.RESEND_API_KEY;
   const to = process.env.ALERT_EMAIL;
   if (!key || !to) throw new Error("RESEND_API_KEY and ALERT_EMAIL must be set to send email");
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      from: process.env.ALERT_FROM || "News Alerts <onboarding@resend.dev>",
-      to: [to],
-      subject: alertSubject(a),
-      html: alertHtml(a, process.env.DASHBOARD_URL ?? ""),
-    }),
+    body: JSON.stringify({ from: process.env.ALERT_FROM || "News Alerts <onboarding@resend.dev>", to: [to], subject, html }),
   });
   if (!res.ok) throw new Error(`Resend: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`);
+}
+
+export async function sendAlertEmail(a: AlertEmail): Promise<void> {
+  await send(alertSubject(a), alertHtml(a, process.env.DASHBOARD_URL ?? ""));
 }
