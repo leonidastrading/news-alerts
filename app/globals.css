@@ -131,3 +131,20 @@ td { padding: 12px; border-top: 1px solid var(--border); vertical-align: top; }
 @media (max-width: 800px) {
   .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Equity curve */
+.equity { margin: 0 0 20px; padding: 16px 16px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.equity-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; margin-bottom: 8px; }
+.equity-head h2 { margin: 0; font-size: 16px; }
+.equity-total { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.equity-total .meta-inline { font-size: 13px; font-weight: 400; }
+.equity-chart { position: relative; }
+.equity svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+.equity .line { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.equity .grid { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.equity .zero { stroke: var(--muted); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.equity .axis { fill: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.equity .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.equity .dot { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+.equity-tip { position: absolute; top: 4px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 1px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); font-size: 13px; color: var(--ink); white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums; }
+.equity-tip span { color: var(--ink-2); }

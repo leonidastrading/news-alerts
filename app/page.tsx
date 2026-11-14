@@ -4,6 +4,7 @@ import { ORIGINS } from "@/lib/origin";
 import { rideReturn } from "@/lib/detect";
 import { positions as fetchPositions, type Position } from "@/lib/alpaca";
 import { likelyMarketHours } from "@/lib/health";
+import { EquityCurve, type EquityPoint } from "@/components/EquityCurve";
 
 export const dynamic = "force-dynamic";
 
@@ -89,6 +90,16 @@ export default async function Page() {
       {"error" in data ? <div className="notice">{data.error}</div> : <Dashboard alerts={data.alerts} misses={data.misses} status={data.status} positions={positions} />}
     </>
   );
+}
+
+/** Closed trades in the order they closed, with the running total of paper P&L. */
+function equityPoints(alerts: AlertRow[]): EquityPoint[] {
+  const closed = alerts
+    .filter((a) => a.pnl != null)
+    .map((a) => ({ at: a.exit_filled_at ?? a.exit_at ?? a.alerted_at, symbol: a.symbol, pnl: a.pnl! }))
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  let total = 0;
+  return closed.map((c) => ({ ...c, total: (total += c.pnl) }));
 }
 
 const avg = (xs: number[]) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null);
@@ -191,6 +202,8 @@ function Dashboard({ alerts, misses: allMisses, status, positions }: { alerts: A
           "The monitor hasn't checked in yet."
         )}
       </p>
+
+      <EquityCurve points={equityPoints(alerts)} />
 
       <section className="tiles">
         <div className="tile">
