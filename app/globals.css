@@ -148,3 +148,9 @@ td { padding: 12px; border-top: 1px solid var(--border); vertical-align: top; }
 .equity .dot { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
 .equity-tip { position: absolute; top: 4px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 1px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); font-size: 13px; color: var(--ink); white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums; }
 .equity-tip span { color: var(--ink-2); }
+
+/* Pagination */
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0 8px; font-size: 14px; }
+.pager a, .pager .off { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); white-space: nowrap; }
+.pager .off { color: var(--muted); opacity: 0.5; }
+.pager .meta-inline { text-align: center; }

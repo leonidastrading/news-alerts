@@ -72,7 +72,15 @@ async function loadPositions(): Promise<Positions> {
   }
 }
 
-export default async function Page() {
+const PAGE_SIZE = 10;
+type Pages = { alerts: number; missed: number };
+
+/** Page number from the query string (1-based), clamped later to what exists. */
+const pageParam = (v: string | string[] | undefined) => Math.max(1, Math.floor(Number(Array.isArray(v) ? v[0] : v) || 1));
+
+export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const q = await searchParams;
+  const pages: Pages = { alerts: pageParam(q.page), missed: pageParam(q.missed) };
   const [data, positions] = await Promise.all([load(), loadPositions()]);
   return (
     <>
@@ -87,7 +95,7 @@ export default async function Page() {
           day and closed at 3:55 PM. No new trades after 3:45 PM; later alerts are only logged.
         </p>
       </header>
-      {"error" in data ? <div className="notice">{data.error}</div> : <Dashboard alerts={data.alerts} misses={data.misses} status={data.status} positions={positions} />}
+      {"error" in data ? <div className="notice">{data.error}</div> : <Dashboard alerts={data.alerts} misses={data.misses} status={data.status} positions={positions} pages={pages} />}
     </>
   );
 }
@@ -131,7 +139,19 @@ const nyMinutes = (iso: string) => {
 };
 const nyDay = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: ET });
 
-function Dashboard({ alerts, misses: allMisses, status, positions }: { alerts: AlertRow[]; misses: MissRow[]; status: Status; positions: Positions }) {
+function Dashboard({
+  alerts,
+  misses: allMisses,
+  status,
+  positions,
+  pages,
+}: {
+  alerts: AlertRow[];
+  misses: MissRow[];
+  status: Status;
+  positions: Positions;
+  pages: Pages;
+}) {
   const all = summarize(alerts);
   // A stock that alerted later the same day isn't a miss.
   const alertedDays = new Set(alerts.map((a) => `${nyDay(a.alerted_at)} ${a.symbol}`));
@@ -251,13 +271,16 @@ function Dashboard({ alerts, misses: allMisses, status, positions }: { alerts: A
       {alerts.length === 0 ? (
         <div className="notice">No alerts yet. They appear here as soon as a stock in the news moves.</div>
       ) : (
-        <div className="alerts">
-          {alerts.map((a) => (
-            <AlertCard key={a.id} a={a} />
-          ))}
-        </div>
+        <section id="alerts">
+          <div className="alerts">
+            {pageOf(alerts, pages.alerts).map((a) => (
+              <AlertCard key={a.id} a={a} />
+            ))}
+          </div>
+          <Pager what="alerts" total={alerts.length} page={pages.alerts} pages={pages} />
+        </section>
       )}
-      <Missed misses={misses} />
+      <Missed misses={misses} pages={pages} />
 
       <p className="footnote">
         Times are New York time. Prices and volumes are from IEX, a single exchange (about 2–3% of all US trading), so volumes are a
@@ -478,7 +501,40 @@ function Ride({ label, a, later }: { label: string; a: AlertRow; later: number |
   );
 }
 
-function Missed({ misses }: { misses: MissRow[] }) {
+/** The items on 1-based page `page` (clamped to the last page). */
+function pageOf<T>(items: T[], page: number): T[] {
+  const last = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const p = Math.min(page, last);
+  return items.slice((p - 1) * PAGE_SIZE, p * PAGE_SIZE);
+}
+
+/** Newer / older links for one list, keeping the other list's page. */
+function Pager({ what, total, page, pages }: { what: keyof Pages; total: number; page: number; pages: Pages }) {
+  const last = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (last === 1) return null;
+  const p = Math.min(page, last);
+  const href = (n: number) => {
+    const next = { ...pages, [what]: n };
+    const qs = new URLSearchParams();
+    if (next.alerts > 1) qs.set("page", String(next.alerts));
+    if (next.missed > 1) qs.set("missed", String(next.missed));
+    const s = qs.toString();
+    return `${s ? `?${s}` : "/"}#${what === "alerts" ? "alerts" : "missed"}`;
+  };
+  const from = (p - 1) * PAGE_SIZE + 1;
+  const to = Math.min(p * PAGE_SIZE, total);
+  return (
+    <nav className="pager" aria-label={`${what === "alerts" ? "Alerts" : "Missed moves"} pages`}>
+      {p > 1 ? <a href={href(p - 1)}>← Newer</a> : <span className="off">← Newer</span>}
+      <span className="meta-inline">
+        {from}–{to} of {total.toLocaleString("en-US")} · page {p} of {last}
+      </span>
+      {p < last ? <a href={href(p + 1)}>Older →</a> : <span className="off">Older →</span>}
+    </nav>
+  );
+}
+
+function Missed({ misses, pages }: { misses: MissRow[]; pages: Pages }) {
   const counts = new Map<string, number>();
   for (const m of misses) counts.set(m.reason_code, (counts.get(m.reason_code) ?? 0) + 1);
   const ranked = [...counts].sort((a, b) => b[1] - a[1]);
@@ -515,7 +571,7 @@ function Missed({ misses }: { misses: MissRow[] }) {
                 </tr>
               </thead>
               <tbody>
-                {misses.map((m) => (
+                {pageOf(misses, pages.missed).map((m) => (
                   <tr key={m.id}>
                     <td className="nowrap">
                       {new Date(`${m.day}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}
@@ -557,6 +613,7 @@ function Missed({ misses }: { misses: MissRow[] }) {
               </tbody>
             </table>
           </div>
+          <Pager what="missed" total={misses.length} page={pages.missed} pages={pages} />
         </>
       )}
     </section>
