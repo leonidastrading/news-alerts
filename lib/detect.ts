@@ -84,7 +84,17 @@ export function symbolsToWatch(news: NewsItem, now: number, cfg: Pick<Config, "m
 }
 
 /** An earnings report or guidance update (the catalyst the earnings strategy trades). */
-export const isEarningsNews = (n: Pick<NewsItem, "headline" | "summary">) => ["Earnings", "Guidance"].includes(categorize(n.headline, n.summary));
+// Previews mention earnings without reporting any ("Snowflake ... Ahead of Earnings").
+const EARNINGS_PREVIEW = /\b(ahead of|preview|to report|will report|set to report|scheduled to report|earnings date|what to (watch|expect))\b/i;
+export const isEarningsNews = (n: Pick<NewsItem, "headline" | "summary">) =>
+  !EARNINGS_PREVIEW.test(n.headline) && ["Earnings", "Guidance"].includes(categorize(n.headline, n.summary));
+
+/** Whether to trade against this alert's move (see Config.fadeIntradayUp / fadeEarningsUp). */
+export function shouldFade(a: { kind: string; direction: number; category: string }, cfg: Pick<Config, "fadeIntradayUp" | "fadeEarningsUp">): boolean {
+  if (a.direction <= 0) return false;
+  if (a.kind === "intraday") return cfg.fadeIntradayUp;
+  return a.kind === "preopen" && a.category === "Earnings" && cfg.fadeEarningsUp;
+}
 
 /**
  * Latest headline and headline count per ticker, for news published while the market was closed.

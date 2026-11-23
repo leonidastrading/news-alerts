@@ -51,6 +51,12 @@ export type AlertRow = {
   exit_filled_at: string | null;
   /** In the S&P 500 when the alert fired (null: list unavailable, or alerts from before it was tracked). */
   sp500: boolean | null;
+  /** Traded against the move: `direction` is the trade's side (-1), the opposite of the move. */
+  faded: boolean | null;
+  /** SPY at the alert, 60 minutes later and at that day's close, to compare with the market. */
+  spy_at: number | null;
+  spy_60m: number | null;
+  spy_0d: number | null;
 };
 
 // The driver returns timestamps as Date objects; the rest of the app works with ISO strings.
@@ -114,7 +120,11 @@ export async function migrate() {
     ADD COLUMN IF NOT EXISTS entry_filled_at timestamptz,
     ADD COLUMN IF NOT EXISTS exit_filled_at timestamptz,
     ADD COLUMN IF NOT EXISTS sp500 boolean,
-    ADD COLUMN IF NOT EXISTS close_0d double precision`;
+    ADD COLUMN IF NOT EXISTS close_0d double precision,
+    ADD COLUMN IF NOT EXISTS faded boolean,
+    ADD COLUMN IF NOT EXISTS spy_at double precision,
+    ADD COLUMN IF NOT EXISTS spy_60m double precision,
+    ADD COLUMN IF NOT EXISTS spy_0d double precision`;
   await sql`CREATE TABLE IF NOT EXISTS misses (
     id serial PRIMARY KEY,
     day date NOT NULL,
@@ -167,17 +177,18 @@ export type NewAlert = {
   dayVolume: number | null;
   prevDayVolume: number | null;
   sp500: boolean | null;
+  faded?: boolean;
 };
 
 export async function insertAlert(a: NewAlert): Promise<number> {
   const rows = await db()`INSERT INTO alerts
     (kind, symbol, direction, news_id, headline, summary, category, origin, url, source, news_at, news_count, seen_at, alerted_at,
      baseline, price, move_pct, prev_close, open_price, gap_pct, range_high, range_low, range_volume,
-     volume_since, day_volume, prev_day_volume, sp500)
+     volume_since, day_volume, prev_day_volume, sp500, faded)
     VALUES (${a.kind}, ${a.symbol}, ${a.direction}, ${a.newsId}, ${a.headline}, ${a.summary}, ${a.category}, ${a.origin}, ${a.url},
             ${a.source}, ${a.newsAt}, ${a.newsCount}, ${a.seenAt.toISOString()}, ${a.alertedAt.toISOString()},
             ${a.baseline}, ${a.price}, ${a.movePct}, ${a.prevClose}, ${a.openPrice}, ${a.gapPct}, ${a.rangeHigh},
-            ${a.rangeLow}, ${a.rangeVolume}, ${a.volumeSince}, ${a.dayVolume}, ${a.prevDayVolume}, ${a.sp500})
+            ${a.rangeLow}, ${a.rangeVolume}, ${a.volumeSince}, ${a.dayVolume}, ${a.prevDayVolume}, ${a.sp500}, ${a.faded ?? false})
     RETURNING id`;
   return rows[0].id as number;
 }
@@ -205,9 +216,19 @@ export async function setExitFill(id: number, price: number, pnl: number, filled
 
 export async function setResults(
   id: number,
-  r: { price15m: number | null; price60m: number | null; close0d: number | null; close1d: number | null; done: boolean },
+  r: {
+    price15m: number | null;
+    price60m: number | null;
+    close0d: number | null;
+    close1d: number | null;
+    spyAt: number | null;
+    spy60m: number | null;
+    spy0d: number | null;
+    done: boolean;
+  },
 ) {
   await db()`UPDATE alerts SET price_15m = ${r.price15m}, price_60m = ${r.price60m}, close_0d = ${r.close0d}, close_1d = ${r.close1d},
+    spy_at = ${r.spyAt}, spy_60m = ${r.spy60m}, spy_0d = ${r.spy0d},
     results_done = ${r.done} WHERE id = ${id}`;
 }
 

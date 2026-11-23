@@ -15,6 +15,11 @@ export function priceAfter(bars: Pick<Bar, "t" | "c">[], at: number, minutes: nu
   return bar ? bar.c : null;
 }
 
+/** Close of the last 1-minute bar that started at or before `at` (the price at that moment). */
+export function priceAt(bars: Pick<Bar, "t" | "c">[], at: number): number | null {
+  return bars.filter((b) => b.t <= at).at(-1)?.c ?? null;
+}
+
 /** Close on the alert's own New York date, once that day's daily bar is in. */
 export function sameDayClose(daily: Pick<Bar, "t" | "c">[], at: number): number | null {
   const day = nyDate(at);

@@ -10,6 +10,7 @@ import {
   overAlertLimit,
   preOpenNews,
   isEarningsNews,
+  shouldFade,
   rejectReason,
   rideReturn,
   exitPlan,
@@ -351,4 +352,18 @@ test("pre-open earnings news is flagged and its headline kept (NOK)", () => {
   assert.equal(m.get("NOK")!.count, 2);
   assert.equal(m.get("VZ")!.earnings, false);
   assert.equal(isEarningsNews({ headline: "Nokia Sinks 9% on Q3 Beat as It Holds Outlook", summary: "" }), true);
+});
+
+test("rises are faded, drops are followed", () => {
+  const on = { fadeIntradayUp: true, fadeEarningsUp: true };
+  assert.equal(shouldFade({ kind: "intraday", direction: 1, category: "Other" }, on), true);
+  assert.equal(shouldFade({ kind: "intraday", direction: -1, category: "Other" }, on), false);
+  assert.equal(shouldFade({ kind: "preopen", direction: 1, category: "Earnings" }, on), true);
+  assert.equal(shouldFade({ kind: "preopen", direction: 1, category: "Other" }, on), false, "logged-only pre-open news is left alone");
+  assert.equal(shouldFade({ kind: "intraday", direction: 1, category: "Other" }, { ...on, fadeIntradayUp: false }), false);
+});
+
+test("earnings previews aren't earnings news (SNOW)", () => {
+  assert.equal(isEarningsNews({ headline: "BofA Securities Reports Favorable Demand Trends for Snowflake Ahead of Q3 Earnings", summary: "" }), false);
+  assert.equal(isEarningsNews({ headline: "Snowflake Q3 EPS $0.35 Beats $0.31 Estimate", summary: "" }), true);
 });

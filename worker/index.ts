@@ -35,6 +35,7 @@ import {
   openingRange,
   preOpenNews,
   rejectReason,
+  shouldFade,
   entryLimit,
   exitPlan,
   tradeBlock,
@@ -71,7 +72,7 @@ import {
 } from "../lib/db.ts";
 import { sendAlertEmail, sendNoticeEmail } from "../lib/email.ts";
 import { likelyMarketHours, openProblems, type Problem } from "../lib/health.ts";
-import { nextDayClose, priceAfter, resultsDone, sameDayClose } from "../lib/results.ts";
+import { nextDayClose, priceAfter, priceAt, resultsDone, sameDayClose } from "../lib/results.ts";
 
 const cfg = loadConfig();
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
@@ -438,7 +439,9 @@ async function fireBreakout(g: GapWatch, s: Snapshot, now: number) {
 let sentDay = "";
 let sentToday: number[] = [];
 
-async function fire(a: NewAlert) {
+async function fire(move: NewAlert) {
+  // Rises on news tend to fade: trade those the other way (Config.fadeIntradayUp / fadeEarningsUp).
+  const a: NewAlert = shouldFade(move, cfg) ? { ...move, direction: -move.direction, faded: true } : move;
   const id = await insertAlert(a);
   stats.alerts++;
   pendingCount++;
@@ -472,13 +475,14 @@ async function fire(a: NewAlert) {
     return;
   }
   sentToday.push(now);
-  log(`ALERT ${a.kind} ${a.symbol} ${a.direction > 0 ? "up" : "down"} after "${a.headline}"`);
+  log(`ALERT ${a.kind} ${a.symbol} ${move.direction > 0 ? "up" : "down"}${a.faded ? " (fading it)" : ""} after "${a.headline}"`);
   let trade = "off";
   if (blocked) {
     await setTradeOpened(id, `skipped: ${blocked}`, null, null);
     trade = `not traded (${blocked})`;
   } else if (cfg.paperTrading) {
     trade = await openTrade(id, a.symbol, a.direction, a.price);
+    if (a.faded) trade += " (fading the rise)";
   }
   await sendAlertEmail({ ...a, minutesAfterNews: (a.alertedAt.getTime() - Date.parse(a.newsAt)) / 60_000, trade }).catch((e) =>
     noteError(`email ${a.symbol}`, e),
@@ -739,7 +743,7 @@ async function followUp() {
   pendingCount = rows.length;
   const now = Date.now();
   // Alpaca allows about 200 requests a minute; leave room for trading when many alerts need results.
-  let budget = 40;
+  let budget = 25;
   for (const a of rows) {
     try {
       if (a.entry_order_id && a.entry_price == null && !a.trade_status?.startsWith("error")) {
@@ -767,7 +771,13 @@ async function followUp() {
         // Daily bars once the alert's session is over (4:00 PM plus a few minutes for the bar to settle).
         const sessionOver = now > nyToUtc(nyDate(at), "16:00") + 10 * 60_000;
         const daily = sessionOver ? await bars(a.symbol, "1Day", new Date(nyToUtc(nyDate(at), "00:00")), new Date(now)) : [];
+        // SPY over the same window, to tell the alert's move from the market's.
+        const spyMin = a.spy_at != null && a.spy_60m != null ? [] : await bars("SPY", "1Min", new Date(at - 5 * 60_000), new Date(Math.min(now, at + 75 * 60_000)));
+        const spyDaily = sessionOver && a.spy_0d == null ? await bars("SPY", "1Day", new Date(nyToUtc(nyDate(at), "00:00")), new Date(now)) : [];
         const r = {
+          spyAt: a.spy_at ?? priceAt(spyMin, at),
+          spy60m: a.spy_60m ?? priceAfter(spyMin, at, 60),
+          spy0d: a.spy_0d ?? sameDayClose(spyDaily, at),
           price15m: a.price_15m ?? priceAfter(min, at, 15),
           price60m: a.price_60m ?? priceAfter(min, at, 60),
           close0d: a.close_0d ?? sameDayClose(daily, at),

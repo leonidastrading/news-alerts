@@ -12,18 +12,25 @@ const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 
 export type AlertEmail = NewAlert & { minutesAfterNews: number; trade: string };
 
+// `direction` is the trade's side; for a faded alert the move went the other way.
+const moveUp = (a: AlertEmail) => (a.faded ? -a.direction : a.direction) > 0;
+
 export function alertSubject(a: AlertEmail): string {
+  return `${a.faded ? "Fading: " : ""}${moveSubject(a)}`.slice(0, 180);
+}
+
+function moveSubject(a: AlertEmail): string {
   if (a.kind === "preopen") {
     const gap = a.gapPct != null ? ` after a ${pct(a.gapPct)} gap` : "";
-    return `${a.symbol} broke ${a.direction > 0 ? "above" : "below"} its opening range${gap}: ${a.headline}`.slice(0, 180);
+    return `${a.symbol} broke ${moveUp(a) ? "above" : "below"} its opening range${gap}: ${a.headline}`;
   }
-  return `${a.symbol} ${pct(a.movePct)} · ${Math.round(a.minutesAfterNews)} min after: ${a.headline}`.slice(0, 180);
+  return `${a.symbol} ${pct(a.movePct)} · ${Math.round(a.minutesAfterNews)} min after: ${a.headline}`;
 }
 
 function whatHappened(a: AlertEmail): string {
   if (a.kind === "preopen") {
     const gap = a.prevClose != null && a.gapPct != null ? `Closed at ${usd(a.prevClose)} yesterday, opened at ${usd(a.openPrice!)} (${pct(a.gapPct)}). ` : "";
-    return `${gap}Opening range ${usd(a.rangeLow!)}–${usd(a.rangeHigh!)}; now ${usd(a.price)}, ${a.direction > 0 ? "above" : "below"} it
+    return `${gap}Opening range ${usd(a.rangeLow!)}–${usd(a.rangeHigh!)}; now ${usd(a.price)}, ${moveUp(a) ? "above" : "below"} it
       (${pct(a.movePct)} from the open).`;
   }
   return `From ${usd(a.baseline)} when the headline arrived to ${usd(a.price)}, ${Math.round(a.minutesAfterNews)} minutes after it was published.`;
@@ -32,7 +39,7 @@ function whatHappened(a: AlertEmail): string {
 export function alertHtml(a: AlertEmail, dashboardUrl: string): string {
   const row = (k: string, v: string) =>
     `<tr><td style="padding:2px 12px 2px 0;color:#7a7873;white-space:nowrap">${k}</td><td style="padding:2px 0">${v}</td></tr>`;
-  const title = a.kind === "preopen" ? `${a.symbol} ${a.direction > 0 ? "▲ broke out" : "▼ broke down"}` : `${a.symbol} ${pct(a.movePct)}`;
+  const title = a.kind === "preopen" ? `${a.symbol} ${moveUp(a) ? "▲ broke out" : "▼ broke down"}` : `${a.symbol} ${pct(a.movePct)}`;
   return `<div style="font:15px/1.5 system-ui,sans-serif;max-width:600px">
   <p style="margin:0 0 4px;font-size:13px;color:#7a7873">${a.kind === "preopen" ? "Pre-open news · opening-range break" : "News alert"} · ${esc(a.category)} · ${esc(a.origin)}</p>
   <h2 style="margin:0 0 8px;font-size:22px">${esc(title)}</h2>

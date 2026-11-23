@@ -68,6 +68,13 @@ export type Config = {
   preopenTrading: "off" | "earnings" | "on";
   /** Pre-open news only counts if the stock gapped at least this much from the previous close (fraction). */
   minGap: number;
+  /**
+   * Trade against the move instead of with it ("fade"): short an intraday rise on news, and short an
+   * earnings gap-up that breaks higher. Oct 26–Nov 23: intraday longs won 19% of the time, gap-up
+   * longs 37%. FADE_INTRADAY_UP / FADE_EARNINGS_UP = off follows the move again.
+   */
+  fadeIntradayUp: boolean;
+  fadeEarningsUp: boolean;
 };
 
 export function loadConfig(): Config {
@@ -103,5 +110,7 @@ export function loadConfig(): Config {
       ? process.env.PREOPEN_TRADING!.toLowerCase()
       : "earnings") as Config["preopenTrading"],
     minGap: num("MIN_GAP_PCT", 3) / 100,
+    fadeIntradayUp: (process.env.FADE_INTRADAY_UP ?? "on").toLowerCase() !== "off",
+    fadeEarningsUp: (process.env.FADE_EARNINGS_UP ?? "on").toLowerCase() !== "off",
   };
 }

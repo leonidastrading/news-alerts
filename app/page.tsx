@@ -91,8 +91,10 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
           <strong>Intraday news:</strong> when a stock moves {process.env.MOVE_PCT ?? "1.5"}% from where it was when the headline arrived.{" "}
           <strong>Earnings and other news from while the market was closed:</strong> when a stock that gapped 3% or more breaks out of
           its first {process.env.OPEN_RANGE_MINUTES ?? "5"} minutes&rsquo; range in the gap&rsquo;s direction; only earnings gaps are
-          traded, the rest are logged. Each alert is emailed and paper-traded in the direction of the move with a limit order, held to the end of the
-          day and closed at 3:55 PM. No new trades after 3:45 PM; later alerts are only logged.
+          traded, the rest are logged. Each traded alert is emailed and paper-traded with a limit order, held to the end of the day and
+          closed at 3:55 PM: <strong>drops are followed (shorted) and rises are faded (also shorted)</strong>, since rises on news tended to
+          reverse. No new trades after 3:45 PM; later alerts are only logged. &ldquo;vs market&rdquo; subtracts what the same trade in SPY
+          did over the same time.
         </p>
       </header>
       {"error" in data ? <div className="notice">{data.error}</div> : <Dashboard alerts={data.alerts} misses={data.misses} status={data.status} positions={positions} pages={pages} />}
@@ -113,10 +115,18 @@ function equityPoints(alerts: AlertRow[]): EquityPoint[] {
 const avg = (xs: number[]) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null);
 const share = (xs: number[]) => (xs.length ? `${Math.round((xs.filter((x) => x > 0).length / xs.length) * 100)}%` : "—");
 
+/** Return to the close in the trade's direction, minus what SPY did in that direction over the same time. */
+function vsMarket(a: AlertRow): number | null {
+  const own = rideReturn(a.direction, a.price, a.close_0d);
+  const mkt = rideReturn(a.direction, a.spy_at, a.spy_0d);
+  return own == null || mkt == null ? null : own - mkt;
+}
+
 function summarize(alerts: AlertRow[]) {
   const r60 = alerts.map((a) => rideReturn(a.direction, a.price, a.price_60m)).filter((x): x is number => x != null);
   const r0d = alerts.map((a) => rideReturn(a.direction, a.price, a.close_0d)).filter((x): x is number => x != null);
   const r1d = alerts.map((a) => rideReturn(a.direction, a.price, a.close_1d)).filter((x): x is number => x != null);
+  const r0dMkt = alerts.map(vsMarket).filter((x): x is number => x != null);
   const closed = alerts.filter((a) => a.pnl != null);
   return {
     count: alerts.length,
@@ -126,6 +136,7 @@ function summarize(alerts: AlertRow[]) {
     pnl: closed.length ? closed.reduce((s, a) => s + a.pnl!, 0) : null,
     kept60: share(r60),
     avg60: avg(r60),
+    avg0dMkt: avg(r0dMkt),
     kept0d: share(r0d),
     avg0d: avg(r0d),
     kept1d: share(r1d),
@@ -157,10 +168,14 @@ function Dashboard({
   const alertedDays = new Set(alerts.map((a) => `${nyDay(a.alerted_at)} ${a.symbol}`));
   const misses = allMisses.filter((m) => !alertedDays.has(`${m.day} ${m.symbol}`));
   const strategyGroups: [string, AlertRow[]][] = [
-    ["Intraday news", alerts.filter((a) => a.kind !== "preopen")],
-    ["Earnings gaps (pre-open, traded)", alerts.filter((a) => a.kind === "preopen" && a.category === "Earnings")],
+    ["Intraday news · fading rises", alerts.filter((a) => a.kind !== "preopen" && a.faded)],
+    ["Intraday news · following drops", alerts.filter((a) => a.kind !== "preopen" && !a.faded && a.direction < 0)],
+    ["Intraday news · following rises (before fading)", alerts.filter((a) => a.kind !== "preopen" && !a.faded && a.direction > 0)],
+    ["Earnings · fading gap-ups", alerts.filter((a) => a.kind === "preopen" && a.category === "Earnings" && a.faded)],
+    ["Earnings · following gap-downs", alerts.filter((a) => a.kind === "preopen" && a.category === "Earnings" && !a.faded && a.direction < 0)],
+    ["Earnings · following gap-ups (before fading)", alerts.filter((a) => a.kind === "preopen" && a.category === "Earnings" && !a.faded && a.direction > 0)],
     ["Other pre-open news (logged only)", alerts.filter((a) => a.kind === "preopen" && a.category !== "Earnings")],
-  ];
+  ].filter(([, rows]) => rows.length > 0) as [string, AlertRow[]][];
   const timeGroups: [string, AlertRow[]][] = [
     ["Open – 10:30 AM", alerts.filter((a) => nyMinutes(a.alerted_at) < 630)],
     ["10:30 AM – 3:00 PM", alerts.filter((a) => nyMinutes(a.alerted_at) >= 630 && nyMinutes(a.alerted_at) < 900)],
@@ -316,6 +331,7 @@ function AlertCard({ a }: { a: AlertRow }) {
           <span className="badge">{pre ? "Pre-open news" : "Intraday news"}</span>
           {a.category && <span className="badge">{a.category}</span>}
           {a.origin && <span className={`badge origin ${a.origin.startsWith("Reactive") ? "late" : ""}`}>{a.origin}</span>}
+          {a.faded && <span className="badge">Fading the rise</span>}
           {a.sp500 && <span className="badge">S&amp;P 500</span>}
           {nyMinutes(a.alerted_at) >= 900 && <span className="badge">Late session</span>}
         </div>
@@ -474,6 +490,15 @@ function AlertCard({ a }: { a: AlertRow }) {
             <Ride label="+60 min" a={a} later={a.price_60m} />
             <Ride label="That day's close" a={a} later={a.close_0d} />
             <Ride label="Next close" a={a} later={a.close_1d} />
+            <div>
+              <dt>Same trade in SPY, to the close</dt>
+              <dd className={tone(rideReturn(a.direction, a.spy_at, a.spy_0d))}>
+                {(() => {
+                  const r = rideReturn(a.direction, a.spy_at, a.spy_0d);
+                  return r == null ? (a.results_done ? "n/a" : "pending") : pct(r, 2);
+                })()}
+              </dd>
+            </div>
           </dl>
         </section>
       </div>
@@ -634,6 +659,7 @@ function Breakdown({ heading, groups }: { heading: string; groups: [string, Aler
             <th className="num">Kept going 60 min</th>
             <th className="num">Avg 60 min</th>
             <th className="num">Avg to the close</th>
+            <th className="num">vs market</th>
             <th className="num">Avg next close</th>
           </tr>
         </thead>
@@ -650,6 +676,7 @@ function Breakdown({ heading, groups }: { heading: string; groups: [string, Aler
                 <td className="num">{g.kept60}</td>
                 <td className={`num ${tone(g.avg60)}`}>{pct(g.avg60, 2)}</td>
                 <td className={`num ${tone(g.avg0d)}`}>{pct(g.avg0d, 2)}</td>
+                <td className={`num ${tone(g.avg0dMkt)}`}>{pct(g.avg0dMkt, 2)}</td>
                 <td className={`num ${tone(g.avg1d)}`}>{pct(g.avg1d, 2)}</td>
               </tr>
             );
